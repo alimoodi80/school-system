@@ -298,9 +298,14 @@ async function loadAttRecent() {
   const rows = await get("/attendance?select=*&order=created_at.desc&limit=30").catch(() => []);
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز ثبتی انجام نشده است.</p>'; return; }
   const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
-  box.innerHTML = `<table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>تاریخ</th><th>وضعیت</th><th>ثبت‌کننده</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td></tr>`).join("")}
+  box.innerHTML = `<table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>تاریخ</th><th>وضعیت</th><th>ثبت‌کننده</th><th>عملیات</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td><td><button class="btn small secondary" data-del-att="${r.id}">حذف</button></td></tr>`).join("")}
     </tbody></table>`;
+  box.querySelectorAll("[data-del-att]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!confirm("این رکورد حضور و غیاب حذف شود؟")) return;
+    try { await api("/attendance?id=eq." + btn.dataset.delAtt, { method: "DELETE" }); toast("حذف شد"); loadAttRecent(); }
+    catch { toast("خطا در حذف"); }
+  }));
 }
 
 /* ---------- Students ---------- */
@@ -326,8 +331,8 @@ async function viewStudents(m) {
       <div id="stuImportResult" style="margin-top:10px"></div>
     </div>
     <div class="panel"><h2>فهرست دانش‌آموزان (${cache.students.length})</h2>
-      <table><thead><tr><th>نام و نام خانوادگی</th><th>کلاس</th><th>ولی</th><th>تلفن ولی</th></tr></thead><tbody>
-      ${cache.students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td><td>${s.parent_name || "—"}</td><td>${s.parent_phone || "—"}</td></tr>`).join("")}
+      <table><thead><tr><th>نام و نام خانوادگی</th><th>کلاس</th><th>ولی</th><th>تلفن ولی</th><th>عملیات</th></tr></thead><tbody>
+      ${cache.students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td><td>${s.parent_name || "—"}</td><td>${s.parent_phone || "—"}</td><td><button class="btn small secondary" data-del-student="${s.id}" data-name="${s.first_name} ${s.last_name}">حذف</button></td></tr>`).join("")}
       </tbody></table></div>`;
   document.getElementById("stuForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -339,6 +344,17 @@ async function viewStudents(m) {
   wireFileImport("stuFile", "stuImportResult", importStudents);
   const stuTpl = document.getElementById("stuTemplate");
   if (stuTpl) stuTpl.addEventListener("click", () => downloadTemplate("students"));
+  m.querySelectorAll("[data-del-student]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!confirm("دانش‌آموز «" + btn.dataset.name + "» حذف شود؟ حضور و غیاب، پیامک‌ها و حساب‌های کاربری وابسته به او هم حذف می‌شوند.")) return;
+    const id = btn.dataset.delStudent;
+    try {
+      await api("/sms_log?student_id=eq." + id, { method: "DELETE" });
+      await api("/attendance?student_id=eq." + id, { method: "DELETE" });
+      await api("/profiles?student_id=eq." + id, { method: "DELETE" });
+      await api("/students?id=eq." + id, { method: "DELETE" });
+      toast("دانش‌آموز حذف شد"); await refreshCache(); render();
+    } catch { toast("خطا در حذف"); }
+  }));
 }
 function val(id) { return document.getElementById(id).value.trim(); }
 
@@ -352,8 +368,8 @@ async function viewClasses(m) {
         <div class="field"><label>نام معلم</label><input id="clsTeacher"></div>
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>` : ""}
     <div class="panel"><h2>کلاس‌ها</h2>
-      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>معلم</th><th>تعداد دانش‌آموز</th></tr></thead><tbody>
-      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.teacher_name || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td></tr>`).join("")}
+      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>معلم</th><th>تعداد دانش‌آموز</th><th>عملیات</th></tr></thead><tbody>
+      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.teacher_name || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></td></tr>`).join("")}
       </tbody></table></div>`;
   const f = document.getElementById("clsForm");
   if (f) f.addEventListener("submit", async (e) => {
@@ -361,6 +377,17 @@ async function viewClasses(m) {
     try { await post("/classes", { name: val("clsName"), grade: val("clsGrade"), teacher_name: val("clsTeacher") || null }); toast("کلاس اضافه شد"); await refreshCache(); render(); }
     catch { toast("خطا در افزودن"); }
   });
+  m.querySelectorAll("[data-del-class]").forEach(btn => btn.addEventListener("click", async () => {
+    const id = btn.dataset.delClass;
+    if (cache.students.some(s => s.class_id === id)) { toast("این کلاس دانش‌آموز دارد و حذف نمی‌شود؛ اول دانش‌آموزانش را حذف کنید"); return; }
+    if (!confirm("کلاس «" + btn.dataset.name + "» حذف شود؟")) return;
+    try {
+      await api("/attendance?class_id=eq." + id, { method: "DELETE" });
+      await api("/homework?class_id=eq." + id, { method: "DELETE" });
+      await api("/classes?id=eq." + id, { method: "DELETE" });
+      toast("کلاس حذف شد"); await refreshCache(); render();
+    } catch { toast("خطا در حذف"); }
+  }));
 }
 
 /* ---------- Staff ---------- */
@@ -382,8 +409,8 @@ async function viewStaff(m) {
       <div id="staffImportResult" style="margin-top:10px"></div>
     </div>
     <div class="panel"><h2>پرسنل (${cache.staff.length})</h2>
-      <table><thead><tr><th>نام</th><th>سمت</th><th>تلفن</th></tr></thead><tbody>
-      ${cache.staff.map(s => `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td>${s.phone || "—"}</td></tr>`).join("")}
+      <table><thead><tr><th>نام</th><th>سمت</th><th>تلفن</th><th>عملیات</th></tr></thead><tbody>
+      ${cache.staff.map(s => `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td>${s.phone || "—"}</td><td><button class="btn small secondary" data-del-staff="${s.id}" data-name="${s.full_name}">حذف</button></td></tr>`).join("")}
       </tbody></table></div>`;
   document.getElementById("staffForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -393,6 +420,15 @@ async function viewStaff(m) {
   wireFileImport("staffFile", "staffImportResult", importStaff);
   const staffTpl = document.getElementById("staffTemplate");
   if (staffTpl) staffTpl.addEventListener("click", () => downloadTemplate("staff"));
+  m.querySelectorAll("[data-del-staff]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!confirm("«" + btn.dataset.name + "» از فهرست پرسنل حذف شود؟")) return;
+    const id = btn.dataset.delStaff;
+    try {
+      await api("/profiles?staff_id=eq." + id, { method: "PATCH", body: JSON.stringify({ staff_id: null }) });
+      await api("/staff?id=eq." + id, { method: "DELETE" });
+      toast("حذف شد"); await refreshCache(); render();
+    } catch { toast("خطا در حذف"); }
+  }));
 }
 
 /* ---------- SMS log ---------- */
@@ -401,10 +437,16 @@ async function viewSms(m) {
   const smsFilter = session.role === "parent" && session.student_id ? "&student_id=eq." + session.student_id : "";
   const rows = await get("/sms_log?select=*&order=created_at.desc&limit=50" + smsFilter).catch(() => []);
   const box = document.getElementById("smsBody");
+  const canDelSms = session.role === "manager" || session.role === "teacher";
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز پیامکی ثبت نشده است. با ثبت غیبت یک دانش‌آموز، رکورد پیامک به‌صورت خودکار اینجا ساخته می‌شود.</p>'; return; }
-  box.innerHTML = `<table><thead><tr><th>تاریخ غیبت</th><th>گیرنده</th><th>متن پیام</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.recipient_phone || "—"}</td><td>${r.message}</td></tr>`).join("")}
+  box.innerHTML = `<table><thead><tr><th>تاریخ غیبت</th><th>گیرنده</th><th>متن پیام</th>${canDelSms ? "<th>عملیات</th>" : ""}</tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.recipient_phone || "—"}</td><td>${r.message}</td>${canDelSms ? `<td><button class="btn small secondary" data-del-sms="${r.id}">حذف</button></td>` : ""}</tr>`).join("")}
     </tbody></table>`;
+  box.querySelectorAll("[data-del-sms]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!confirm("این رکورد پیامک حذف شود؟")) return;
+    try { await api("/sms_log?id=eq." + btn.dataset.delSms, { method: "DELETE" }); toast("حذف شد"); render(); }
+    catch { toast("خطا در حذف"); }
+  }));
 }
 
 /* ---------- Announcements ---------- */
@@ -420,7 +462,7 @@ async function viewAnnouncements(m) {
       <div class="field" style="margin-top:10px"><label>متن</label><textarea id="annBody" rows="3" required></textarea></div>
       <button class="btn small">ثبت اطلاعیه</button></form></div>` : ""}
     <div class="panel"><h2>اطلاعیه‌ها</h2>
-      ${(rows && rows.length) ? rows.map(a => `<div style="padding:10px 0;border-bottom:1px solid #eef2f7"><b>${a.title}</b> <span class="badge role">${AUD_FA[a.audience] || a.audience}</span><div style="margin-top:4px">${a.body}</div><div class="muted">${faDate((a.created_at || "").slice(0, 10))}</div></div>`).join("") : '<p class="muted">اطلاعیه‌ای نیست.</p>'}
+      ${(rows && rows.length) ? rows.map(a => `<div style="padding:10px 0;border-bottom:1px solid #eef2f7"><b>${a.title}</b> <span class="badge role">${AUD_FA[a.audience] || a.audience}</span><div style="margin-top:4px">${a.body}</div><div class="muted">${faDate((a.created_at || "").slice(0, 10))}</div>${session.role === "manager" || session.role === "teacher" ? `<button class="btn small secondary" data-del-ann="${a.id}" style="margin-top:6px">حذف</button>` : ""}</div>`).join("") : '<p class="muted">اطلاعیه‌ای نیست.</p>'}
     </div>`;
   const f = document.getElementById("annForm");
   if (f) f.addEventListener("submit", async (e) => {
@@ -428,10 +470,16 @@ async function viewAnnouncements(m) {
     try { await post("/announcements", { title: val("annTitle"), body: val("annBody"), audience: val("annAud") }); toast("اطلاعیه ثبت شد"); render(); }
     catch { toast("خطا در ثبت"); }
   });
+  m.querySelectorAll("[data-del-ann]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!confirm("این اطلاعیه حذف شود؟")) return;
+    try { await api("/announcements?id=eq." + btn.dataset.delAnn, { method: "DELETE" }); toast("حذف شد"); render(); }
+    catch { toast("خطا در حذف"); }
+  }));
 }
 
 /* ---------- Homework ---------- */
 async function viewHomework(m) {
+  const canEditHw = session.role === "manager" || session.role === "teacher";
   let hwFilter = "";
   if ((session.role === "student" || session.role === "parent") && session.student_id) {
     const st = await get("/students?select=class_id&id=eq." + session.student_id).catch(() => []);
@@ -448,8 +496,8 @@ async function viewHomework(m) {
       <div class="field" style="margin-top:10px"><label>توضیح</label><textarea id="hwDesc" rows="2"></textarea></div>
       <button class="btn small">ثبت تکلیف</button></form></div>` : ""}
     <div class="panel"><h2>تکالیف</h2>
-      ${(rows && rows.length) ? `<table><thead><tr><th>عنوان</th><th>کلاس</th><th>مهلت</th><th>توضیح</th></tr></thead><tbody>
-        ${rows.map(h => `<tr><td>${h.title}</td><td>${className(h.class_id)}</td><td>${faDate(h.due_date)}</td><td>${h.description || "—"}</td></tr>`).join("")}
+      ${(rows && rows.length) ? `<table><thead><tr><th>عنوان</th><th>کلاس</th><th>مهلت</th><th>توضیح</th>${canEditHw ? "<th>عملیات</th>" : ""}</tr></thead><tbody>
+        ${rows.map(h => `<tr><td>${h.title}</td><td>${className(h.class_id)}</td><td>${faDate(h.due_date)}</td><td>${h.description || "—"}</td>${canEditHw ? `<td><button class="btn small secondary" data-del-hw="${h.id}">حذف</button></td>` : ""}</tr>`).join("")}
         </tbody></table>` : '<p class="muted">تکلیفی ثبت نشده است.</p>'}
     </div>`;
   const f = document.getElementById("hwForm");
@@ -458,6 +506,11 @@ async function viewHomework(m) {
     try { await post("/homework", { class_id: val("hwClass"), title: val("hwTitle"), description: val("hwDesc") || null, due_date: val("hwDue") || null }); toast("تکلیف ثبت شد"); render(); }
     catch { toast("خطا در ثبت"); }
   });
+  m.querySelectorAll("[data-del-hw]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!confirm("این تکلیف حذف شود؟")) return;
+    try { await api("/homework?id=eq." + btn.dataset.delHw, { method: "DELETE" }); toast("حذف شد"); render(); }
+    catch { toast("خطا در حذف"); }
+  }));
 }
 
 /* ---------- Bulk import (Excel / CSV) ---------- */
