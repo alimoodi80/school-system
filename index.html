@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>سامانه مدیریت مدرسه</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Vazirmatn', Tahoma, sans-serif; background: #f1f5f9; color: #0f172a; min-height: 100vh; }
+  button, input, select, textarea { font-family: inherit; }
+  .hidden { display: none !important; }
+  /* Login */
+  #loginView { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; background: linear-gradient(135deg, #1e3a8a, #0ea5e9); }
+  .login-card { background: #fff; border-radius: 16px; padding: 28px 24px; width: 100%; max-width: 380px; box-shadow: 0 20px 40px rgba(0,0,0,.25); }
+  .login-card h1 { font-size: 22px; text-align: center; margin-bottom: 6px; }
+  .login-card p.sub { text-align: center; color: #64748b; font-size: 13px; margin-bottom: 20px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; margin-bottom: 6px; color: #334155; }
+  .field input, .field select, .field textarea { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 14px; background: #fff; }
+  .btn { background: #2563eb; color: #fff; border: none; padding: 11px 18px; border-radius: 10px; font-size: 14px; cursor: pointer; width: 100%; }
+  .btn:hover { background: #1d4ed8; }
+  .btn.secondary { background: #e2e8f0; color: #0f172a; }
+  .btn.small { width: auto; padding: 8px 14px; font-size: 13px; }
+  .demo-hint { margin-top: 16px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 10px; padding: 10px 12px; font-size: 12px; color: #475569; line-height: 2; }
+  .error { color: #dc2626; font-size: 13px; text-align: center; min-height: 18px; margin-bottom: 8px; }
+  /* Layout */
+  header.topbar { background: #1e3a8a; color: #fff; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 20; }
+  header.topbar .title { font-size: 16px; font-weight: 700; }
+  header.topbar .user { font-size: 12px; opacity: .9; }
+  header.topbar button { background: rgba(255,255,255,.15); color: #fff; border: none; padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+  nav.tabs { display: flex; gap: 6px; overflow-x: auto; padding: 10px 12px; background: #fff; border-bottom: 1px solid #e2e8f0; position: sticky; top: 49px; z-index: 19; }
+  nav.tabs button { white-space: nowrap; border: 1px solid #e2e8f0; background: #f8fafc; padding: 8px 14px; border-radius: 999px; font-size: 13px; cursor: pointer; }
+  nav.tabs button.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+  main { padding: 16px 12px 40px; max-width: 980px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: #fff; border-radius: 14px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .card .num { font-size: 26px; font-weight: 800; color: #1e3a8a; }
+  .card .lbl { font-size: 12px; color: #64748b; margin-top: 4px; }
+  .panel { background: #fff; border-radius: 14px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 16px; }
+  .panel h2 { font-size: 16px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 9px 8px; border-bottom: 1px solid #eef2f7; text-align: right; }
+  th { color: #64748b; font-weight: 600; font-size: 12px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; align-items: end; }
+  .row-actions .field { margin-bottom: 0; flex: 1; min-width: 140px; }
+  .seg { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 999px; overflow: hidden; }
+  .seg button { border: none; background: #fff; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .seg button.on-present { background: #16a34a; color: #fff; }
+  .seg button.on-absent { background: #dc2626; color: #fff; }
+  .seg button.on-late { background: #d97706; color: #fff; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; }
+  .badge.present { background: #dcfce7; color: #166534; }
+  .badge.absent { background: #fee2e2; color: #991b1b; }
+  .badge.late { background: #fef3c7; color: #92400e; }
+  .badge.role { background: #dbeafe; color: #1e40af; }
+  .muted { color: #64748b; font-size: 12px; }
+  .toast { position: fixed; bottom: 18px; right: 50%; transform: translateX(50%); background: #0f172a; color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 13px; z-index: 50; box-shadow: 0 8px 20px rgba(0,0,0,.3); }
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+</style>
+</head>
+<body>
+
+<!-- ===== Login ===== -->
+<div id="loginView">
+  <div class="login-card">
+    <h1>سامانه مدیریت مدرسه</h1>
+    <p class="sub">برای ورود، نام کاربری و رمز عبور را وارد کنید</p>
+    <div class="error" id="loginError"></div>
+    <form id="loginForm">
+      <div class="field"><label>نام کاربری</label><input id="loginUser" autocomplete="username" required></div>
+      <div class="field"><label>رمز عبور</label><input id="loginPass" type="password" autocomplete="current-password" required></div>
+      <button class="btn" type="submit" id="loginBtn">ورود</button>
+    </form>
+    <div class="demo-hint">
+      حساب‌های نمایشی (رمز همه: 1234)<br>
+      مدیر: <b>modir</b> &nbsp;|&nbsp; معلم: <b>moalem</b> &nbsp;|&nbsp; ولی: <b>vali</b>
+    </div>
+  </div>
+</div>
+
+<!-- ===== App ===== -->
+<div id="appView" class="hidden">
+  <header class="topbar">
+    <div>
+      <div class="title">سامانه مدیریت مدرسه</div>
+      <div class="user" id="whoAmI"></div>
+    </div>
+    <button id="logoutBtn">خروج</button>
+  </header>
+  <nav class="tabs" id="tabs"></nav>
+  <main id="main"></main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script>
+const SUPABASE_URL = "https://noxycrhmudyqxihrhyvi.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5veHljcmhtdWR5cXhpaHJoeXZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ0OTc5MzIsImV4cCI6MjExMDA3MzkzMn0.mQRwtQQHYG6qt5B-8D5D9MtdReCyXtgPRkm_ybSLZSE";
+const API = SUPABASE_URL + "/rest/v1";
+const HEADERS = { "apikey": SUPABASE_ANON_KEY, "Authorization": "Bearer " + SUPABASE_ANON_KEY, "Content-Type": "application/json" };
+
+let session = null;       // {id, username, full_name, role}
+let cache = { classes: [], students: [], staff: [] };
+let currentTab = "dashboard";
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.remove("hidden");
+  setTimeout(() => t.classList.add("hidden"), 2600);
+}
+function faDate(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso + (iso.length === 10 ? "T00:00:00" : "")).toLocaleDateString("fa-IR"); } catch { return iso; }
+}
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+
+async function api(path, opts = {}) {
+  const { headers: extraHeaders, ...rest } = opts;
+  const res = await fetch(API + path, { ...rest, headers: { ...HEADERS, ...(extraHeaders || {}) } });
+  if (!res.ok) { const txt = await res.text(); throw new Error(txt || ("HTTP " + res.status)); }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+const get = (path) => api(path);
+const post = (path, body, prefer = "return=representation") => api(path, { method: "POST", body: JSON.stringify(body), headers: { "Prefer": prefer } });
+const upsert = (path, body) => api(path, { method: "POST", body: JSON.stringify(body), headers: { "Prefer": "resolution=merge-duplicates,return=representation" } });
+
+/* ---------- Auth ---------- */
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const u = document.getElementById("loginUser").value.trim();
+  const p = document.getElementById("loginPass").value;
+  const err = document.getElementById("loginError");
+  err.textContent = "";
+  document.getElementById("loginBtn").textContent = "در حال بررسی…";
+  try {
+    const rows = await post("/rpc/login_check", { p_username: u, p_password: p });
+    if (!rows || !rows.length) { err.textContent = "نام کاربری یا رمز عبور اشتباه است."; return; }
+    session = rows[0];
+    localStorage.setItem("school_session", JSON.stringify(session));
+    enterApp();
+  } catch (ex) { err.textContent = "خطا در اتصال به سامانه."; }
+  finally { document.getElementById("loginBtn").textContent = "ورود"; }
+});
+document.getElementById("logoutBtn").addEventListener("click", () => {
+  session = null; localStorage.removeItem("school_session");
+  document.getElementById("appView").classList.add("hidden");
+  document.getElementById("loginView").classList.remove("hidden");
+});
+
+const ROLE_FA = { manager: "مدیر", teacher: "معلم", parent: "ولی" };
+const TABS = [
+  { id: "dashboard", label: "داشبورد", roles: ["manager", "teacher", "parent"] },
+  { id: "attendance", label: "حضور و غیاب", roles: ["manager", "teacher"] },
+  { id: "students", label: "دانش‌آموزان", roles: ["manager", "teacher"] },
+  { id: "classes", label: "کلاس‌ها", roles: ["manager", "teacher", "parent"] },
+  { id: "staff", label: "پرسنل", roles: ["manager"] },
+  { id: "sms", label: "پنل پیامک", roles: ["manager", "teacher", "parent"] },
+  { id: "announcements", label: "اطلاعیه‌ها", roles: ["manager", "teacher", "parent"] },
+  { id: "homework", label: "تکالیف", roles: ["manager", "teacher", "parent"] },
+];
+
+async function enterApp() {
+  document.getElementById("loginView").classList.add("hidden");
+  document.getElementById("appView").classList.remove("hidden");
+  document.getElementById("whoAmI").textContent = session.full_name + " — " + (ROLE_FA[session.role] || session.role);
+  const nav = document.getElementById("tabs");
+  nav.innerHTML = "";
+  TABS.filter(t => t.roles.includes(session.role)).forEach(t => {
+    const b = document.createElement("button");
+    b.textContent = t.label; b.dataset.tab = t.id;
+    b.addEventListener("click", () => { currentTab = t.id; render(); });
+    nav.appendChild(b);
+  });
+  await refreshCache();
+  currentTab = "dashboard";
+  render();
+}
+async function refreshCache() {
+  const [classes, students, staff] = await Promise.all([
+    get("/classes?select=*&order=grade"), get("/students?select=*&order=last_name"), get("/staff?select=*")
+  ]);
+  cache = { classes: classes || [], students: students || [], staff: staff || [] };
+}
+function className(id) { const c = cache.classes.find(c => c.id === id); return c ? c.name : "—"; }
+function studentName(id) { const s = cache.students.find(s => s.id === id); return s ? (s.first_name + " " + s.last_name) : "—"; }
+
+function render() {
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === currentTab));
+  const m = document.getElementById("main");
+  if (currentTab === "dashboard") return viewDashboard(m);
+  if (currentTab === "attendance") return viewAttendance(m);
+  if (currentTab === "students") return viewStudents(m);
+  if (currentTab === "classes") return viewClasses(m);
+  if (currentTab === "staff") return viewStaff(m);
+  if (currentTab === "sms") return viewSms(m);
+  if (currentTab === "announcements") return viewAnnouncements(m);
+  if (currentTab === "homework") return viewHomework(m);
+}
+
+/* ---------- Dashboard ---------- */
+async function viewDashboard(m) {
+  m.innerHTML = '<div class="panel">در حال بارگذاری…</div>';
+  const today = todayISO();
+  const att = await get("/attendance?select=status&attendance_date=eq." + today).catch(() => []);
+  const smsCount = await get("/sms_log?select=id").catch(() => []);
+  const cnt = (s) => (att || []).filter(a => a.status === s).length;
+  m.innerHTML = `
+    <div class="cards">
+      <div class="card"><div class="num">${cache.students.length}</div><div class="lbl">دانش‌آموز</div></div>
+      <div class="card"><div class="num">${cache.classes.length}</div><div class="lbl">کلاس</div></div>
+      <div class="card"><div class="num">${cache.staff.length}</div><div class="lbl">پرسنل</div></div>
+      <div class="card"><div class="num">${smsCount ? smsCount.length : 0}</div><div class="lbl">پیامک ثبت‌شده</div></div>
+    </div>
+    <div class="panel">
+      <h2>حضور و غیاب امروز — ${faDate(today)}</h2>
+      <p>حاضر: <b>${cnt("present")}</b> &nbsp;|&nbsp; غایب: <b>${cnt("absent")}</b> &nbsp;|&nbsp; تأخیر: <b>${cnt("late")}</b></p>
+      <p class="muted" style="margin-top:8px">حضور و غیابی که معلم ثبت کند، بلافاصله همین‌جا برای مدیر دیده می‌شود.</p>
+    </div>`;
+}
+
+/* ---------- Attendance ---------- */
+let attState = {}; // student_id -> status
+async function viewAttendance(m) {
+  const today = todayISO();
+  m.innerHTML = `
+    <div class="panel">
+      <h2>ثبت حضور و غیاب</h2>
+      <div class="row-actions">
+        <div class="field"><label>کلاس</label><select id="attClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+        <div class="field"><label>تاریخ</label><input type="date" id="attDate" value="${today}"></div>
+        <button class="btn small" id="attLoad">نمایش فهرست</button>
+      </div>
+      <div id="attBody"><p class="muted">یک کلاس را انتخاب کنید و «نمایش فهرست» را بزنید.</p></div>
+    </div>
+    <div class="panel">
+      <h2>آخرین ثبت‌ها</h2>
+      <div id="attRecent"><p class="muted">در حال بارگذاری…</p></div>
+    </div>`;
+  document.getElementById("attLoad").addEventListener("click", loadAttList);
+  loadAttRecent();
+}
+async function loadAttList() {
+  const classId = document.getElementById("attClass").value;
+  const date = document.getElementById("attDate").value || todayISO();
+  const body = document.getElementById("attBody");
+  body.innerHTML = '<p class="muted">در حال بارگذاری…</p>';
+  const students = cache.students.filter(s => s.class_id === classId);
+  const existing = await get(`/attendance?select=student_id,status&class_id=eq.${classId}&attendance_date=eq.${date}`).catch(() => []);
+  attState = {};
+  (existing || []).forEach(r => attState[r.student_id] = r.status);
+  if (!students.length) { body.innerHTML = '<p class="muted">این کلاس دانش‌آموزی ندارد.</p>'; return; }
+  body.innerHTML = `
+    <table><thead><tr><th>دانش‌آموز</th><th>وضعیت</th></tr></thead><tbody>
+    ${students.map(s => `
+      <tr><td>${s.first_name} ${s.last_name}</td>
+      <td><span class="seg" data-student="${s.id}">
+        ${["present", "absent", "late"].map(st => `<button type="button" data-status="${st}" class="${(attState[s.id] || "present") === st ? "on-" + st : ""}">${{ present: "حاضر", absent: "غایب", late: "تأخیر" }[st]}</button>`).join("")}
+      </span></td></tr>`).join("")}
+    </tbody></table>
+    <button class="btn" id="attSave" style="margin-top:14px">ثبت حضور و غیاب</button>`;
+  body.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
+    const seg = b.closest(".seg"); const sid = seg.dataset.student;
+    attState[sid] = b.dataset.status;
+    seg.querySelectorAll("button").forEach(x => x.className = x.dataset.status === attState[sid] ? "on-" + attState[sid] : "");
+  }));
+  document.getElementById("attSave").addEventListener("click", async () => {
+    const rows = students.map(s => ({ student_id: s.id, class_id: classId, attendance_date: date, status: attState[s.id] || "present", recorded_by: session.username }));
+    try { await upsert("/attendance", rows); toast("حضور و غیاب ثبت شد"); loadAttRecent(); }
+    catch (ex) { toast("خطا در ثبت"); }
+  });
+}
+async function loadAttRecent() {
+  const box = document.getElementById("attRecent");
+  const rows = await get("/attendance?select=*&order=created_at.desc&limit=30").catch(() => []);
+  if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز ثبتی انجام نشده است.</p>'; return; }
+  const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
+  box.innerHTML = `<table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>تاریخ</th><th>وضعیت</th><th>ثبت‌کننده</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td></tr>`).join("")}
+    </tbody></table>`;
+}
+
+/* ---------- Students ---------- */
+async function viewStudents(m) {
+  m.innerHTML = `
+    <div class="panel">
+      <h2>افزودن دانش‌آموز</h2>
+      <form id="stuForm"><div class="form-grid">
+        <div class="field"><label>نام</label><input id="stuFirst" required></div>
+        <div class="field"><label>نام خانوادگی</label><input id="stuLast" required></div>
+        <div class="field"><label>کلاس</label><select id="stuClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+        <div class="field"><label>نام ولی</label><input id="stuParent"></div>
+        <div class="field"><label>تلفن ولی</label><input id="stuPhone"></div>
+      </div><button class="btn small" style="margin-top:10px">افزودن</button></form>
+    </div>
+    <div class="panel"><h2>فهرست دانش‌آموزان (${cache.students.length})</h2>
+      <table><thead><tr><th>نام و نام خانوادگی</th><th>کلاس</th><th>ولی</th><th>تلفن ولی</th></tr></thead><tbody>
+      ${cache.students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td><td>${s.parent_name || "—"}</td><td>${s.parent_phone || "—"}</td></tr>`).join("")}
+      </tbody></table></div>`;
+  document.getElementById("stuForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await post("/students", { first_name: val("stuFirst"), last_name: val("stuLast"), class_id: val("stuClass"), parent_name: val("stuParent") || null, parent_phone: val("stuPhone") || null });
+      toast("دانش‌آموز اضافه شد"); await refreshCache(); render();
+    } catch { toast("خطا در افزودن"); }
+  });
+}
+function val(id) { return document.getElementById(id).value.trim(); }
+
+/* ---------- Classes ---------- */
+async function viewClasses(m) {
+  m.innerHTML = `
+    ${session.role === "manager" ? `<div class="panel"><h2>افزودن کلاس</h2>
+      <form id="clsForm"><div class="form-grid">
+        <div class="field"><label>نام کلاس</label><input id="clsName" required></div>
+        <div class="field"><label>پایه</label><input id="clsGrade" required></div>
+        <div class="field"><label>نام معلم</label><input id="clsTeacher"></div>
+      </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>` : ""}
+    <div class="panel"><h2>کلاس‌ها</h2>
+      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>معلم</th><th>تعداد دانش‌آموز</th></tr></thead><tbody>
+      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.teacher_name || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td></tr>`).join("")}
+      </tbody></table></div>`;
+  const f = document.getElementById("clsForm");
+  if (f) f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await post("/classes", { name: val("clsName"), grade: val("clsGrade"), teacher_name: val("clsTeacher") || null }); toast("کلاس اضافه شد"); await refreshCache(); render(); }
+    catch { toast("خطا در افزودن"); }
+  });
+}
+
+/* ---------- Staff ---------- */
+async function viewStaff(m) {
+  m.innerHTML = `
+    <div class="panel"><h2>افزودن پرسنل</h2>
+      <form id="staffForm"><div class="form-grid">
+        <div class="field"><label>نام و نام خانوادگی</label><input id="stName" required></div>
+        <div class="field"><label>سمت</label><input id="stJob" required></div>
+        <div class="field"><label>تلفن</label><input id="stPhone"></div>
+      </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>
+    <div class="panel"><h2>پرسنل (${cache.staff.length})</h2>
+      <table><thead><tr><th>نام</th><th>سمت</th><th>تلفن</th></tr></thead><tbody>
+      ${cache.staff.map(s => `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td>${s.phone || "—"}</td></tr>`).join("")}
+      </tbody></table></div>`;
+  document.getElementById("staffForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await post("/staff", { full_name: val("stName"), job_title: val("stJob"), phone: val("stPhone") || null }); toast("پرسنل اضافه شد"); await refreshCache(); render(); }
+    catch { toast("خطا در افزودن"); }
+  });
+}
+
+/* ---------- SMS log ---------- */
+async function viewSms(m) {
+  m.innerHTML = '<div class="panel"><h2>پنل پیامک — ثبت سیستمی (پیامک واقعی ارسال نمی‌شود)</h2><div id="smsBody"><p class="muted">در حال بارگذاری…</p></div></div>';
+  const rows = await get("/sms_log?select=*&order=created_at.desc&limit=50").catch(() => []);
+  const box = document.getElementById("smsBody");
+  if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز پیامکی ثبت نشده است. با ثبت غیبت یک دانش‌آموز، رکورد پیامک به‌صورت خودکار اینجا ساخته می‌شود.</p>'; return; }
+  box.innerHTML = `<table><thead><tr><th>تاریخ غیبت</th><th>گیرنده</th><th>متن پیام</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.recipient_phone || "—"}</td><td>${r.message}</td></tr>`).join("")}
+    </tbody></table>`;
+}
+
+/* ---------- Announcements ---------- */
+const AUD_FA = { all: "همه", teachers: "معلم‌ها", parents: "اولیا", students: "دانش‌آموزان" };
+async function viewAnnouncements(m) {
+  const rows = await get("/announcements?select=*&order=created_at.desc").catch(() => []);
+  m.innerHTML = `
+    ${session.role !== "parent" ? `<div class="panel"><h2>اطلاعیه جدید</h2>
+      <form id="annForm"><div class="form-grid">
+        <div class="field"><label>عنوان</label><input id="annTitle" required></div>
+        <div class="field"><label>مخاطب</label><select id="annAud">${Object.keys(AUD_FA).map(k => `<option value="${k}">${AUD_FA[k]}</option>`).join("")}</select></div>
+      </div>
+      <div class="field" style="margin-top:10px"><label>متن</label><textarea id="annBody" rows="3" required></textarea></div>
+      <button class="btn small">ثبت اطلاعیه</button></form></div>` : ""}
+    <div class="panel"><h2>اطلاعیه‌ها</h2>
+      ${(rows && rows.length) ? rows.map(a => `<div style="padding:10px 0;border-bottom:1px solid #eef2f7"><b>${a.title}</b> <span class="badge role">${AUD_FA[a.audience] || a.audience}</span><div style="margin-top:4px">${a.body}</div><div class="muted">${faDate((a.created_at || "").slice(0, 10))}</div></div>`).join("") : '<p class="muted">اطلاعیه‌ای نیست.</p>'}
+    </div>`;
+  const f = document.getElementById("annForm");
+  if (f) f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await post("/announcements", { title: val("annTitle"), body: val("annBody"), audience: val("annAud") }); toast("اطلاعیه ثبت شد"); render(); }
+    catch { toast("خطا در ثبت"); }
+  });
+}
+
+/* ---------- Homework ---------- */
+async function viewHomework(m) {
+  const rows = await get("/homework?select=*&order=created_at.desc").catch(() => []);
+  m.innerHTML = `
+    ${session.role !== "parent" ? `<div class="panel"><h2>تکلیف جدید</h2>
+      <form id="hwForm"><div class="form-grid">
+        <div class="field"><label>کلاس</label><select id="hwClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+        <div class="field"><label>عنوان</label><input id="hwTitle" required></div>
+        <div class="field"><label>مهلت تحویل</label><input type="date" id="hwDue"></div>
+      </div>
+      <div class="field" style="margin-top:10px"><label>توضیح</label><textarea id="hwDesc" rows="2"></textarea></div>
+      <button class="btn small">ثبت تکلیف</button></form></div>` : ""}
+    <div class="panel"><h2>تکالیف</h2>
+      ${(rows && rows.length) ? `<table><thead><tr><th>عنوان</th><th>کلاس</th><th>مهلت</th><th>توضیح</th></tr></thead><tbody>
+        ${rows.map(h => `<tr><td>${h.title}</td><td>${className(h.class_id)}</td><td>${faDate(h.due_date)}</td><td>${h.description || "—"}</td></tr>`).join("")}
+        </tbody></table>` : '<p class="muted">تکلیفی ثبت نشده است.</p>'}
+    </div>`;
+  const f = document.getElementById("hwForm");
+  if (f) f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await post("/homework", { class_id: val("hwClass"), title: val("hwTitle"), description: val("hwDesc") || null, due_date: val("hwDue") || null }); toast("تکلیف ثبت شد"); render(); }
+    catch { toast("خطا در ثبت"); }
+  });
+}
+
+/* ---------- Init ---------- */
+(async () => {
+  const saved = localStorage.getItem("school_session");
+  if (saved) {
+    try { session = JSON.parse(saved); await enterApp(); }
+    catch { localStorage.removeItem("school_session"); session = null; document.getElementById("appView").classList.add("hidden"); document.getElementById("loginView").classList.remove("hidden"); }
+  }
+})();
+</script>
+</body>
+</html>
