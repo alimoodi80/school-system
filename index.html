@@ -476,6 +476,10 @@ function downloadTemplate(kind) {
 }
 
 async function readRows(file) {
+  if (/\.csv$/i.test(file.name) || file.type === "text/csv") {
+    const text = (await file.text()).replace(/^\uFEFF/, "");
+    return parseCsv(text);
+  }
   if (window.XLSX) {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: "array" });
@@ -486,22 +490,50 @@ async function readRows(file) {
       return o;
     });
   }
-  if (/\.csv$/i.test(file.name)) {
-    const text = (await file.text()).replace(/^\uFEFF/, "");
-    const lines = text.split(/\r?\n/).filter(l => l.trim());
-    if (!lines.length) return [];
-    const heads = lines[0].split(",").map(h => h.trim());
-    return lines.slice(1).map(l => {
-      const cells = l.split(",");
-      const o = {};
-      heads.forEach((h, i) => { o[h] = (cells[i] || "").trim(); });
-      return o;
-    });
-  }
   throw new Error("xlsx-unavailable");
 }
 
-function pick(row, names) { for (const n of names) { if (row[n]) return row[n]; } return ""; }
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cell = "", inQ = false;
+  const s = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inQ) {
+      if (ch === '"') { if (s[i + 1] === '"') { cell += '"'; i++; } else inQ = false; }
+      else cell += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\n") { row.push(cell); cell = ""; rows.push(row); row = []; }
+    else cell += ch;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  const data = rows.filter(r => r.some(c => String(c).trim() !== ""));
+  if (!data.length) return [];
+  const heads = data[0].map(h => String(h).trim());
+  return data.slice(1).map(cells => {
+    const o = {};
+    heads.forEach((h, i) => { o[h] = String(cells[i] || "").trim(); });
+    return o;
+  });
+}
+
+function normFa(s) {
+  return String(s || "").replace(/\u064A/g, "\u06CC").replace(/\u0643/g, "\u06A9").replace(/\u200C/g, " ").replace(/\s+/g, " ").trim();
+}
+function fixPhone(v) {
+  v = String(v || "").replace(/\D/g, "");
+  if (/^9\d{9}$/.test(v)) v = "0" + v;
+  return v;
+}
+function pick(row, names) {
+  const keys = Object.keys(row);
+  for (const n of names) {
+    const nn = normFa(n);
+    for (const k of keys) { if (normFa(k) === nn && row[k]) return row[k]; }
+  }
+  return "";
+}
 
 async function importStudents(rows) {
   let added = 0, skipped = 0, errors = 0;
@@ -510,7 +542,7 @@ async function importStudents(rows) {
   for (const r of rows) {
     const first = pick(r, ["نام", "first_name"]);
     const last = pick(r, ["نام خانوادگی", "last_name"]);
-    const clsName = pick(r, ["نام کلاس", "کلاس", "class_name", "class"]);
+    const clsName = normFa(pick(r, ["نام کلاس", "کلاس", "class_name", "class"]));
     if (!first || !last || !clsName) { errors++; continue; }
     let cls = cache.classes.find(c => c.name === clsName);
     if (!cls) {
@@ -525,7 +557,7 @@ async function importStudents(rows) {
     const key = first + "|" + last + "|" + cls.id;
     if (existing.has(key)) { skipped++; continue; }
     existing.add(key);
-    toInsert.push({ first_name: first, last_name: last, class_id: cls.id, parent_name: pick(r, ["نام ولی", "ولی", "parent_name"]) || null, parent_phone: pick(r, ["تلفن ولی", "تلفن", "parent_phone"]) || null });
+    toInsert.push({ first_name: first, last_name: last, class_id: cls.id, parent_name: pick(r, ["نام ولی", "ولی", "parent_name"]) || null, parent_phone: fixPhone(pick(r, ["تلفن ولی", "تلفن", "parent_phone"])) || null });
   }
   if (toInsert.length) {
     try { await post("/students", toInsert); added = toInsert.length; }
@@ -542,7 +574,7 @@ async function importStaff(rows) {
     const name = pick(r, ["نام و نام خانوادگی", "نام", "full_name"]);
     const job = pick(r, ["سمت", "job_title"]);
     if (!name || !job) { errors++; continue; }
-    payload.push({ full_name: name, job_title: job, phone: pick(r, ["تلفن", "phone"]) || null });
+    payload.push({ full_name: name, job_title: job, phone: fixPhone(pick(r, ["تلفن", "phone"])) || null });
   }
   let added = 0;
   if (payload.length) {
