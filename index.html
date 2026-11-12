@@ -59,6 +59,7 @@
   .toast { position: fixed; bottom: 18px; right: 50%; transform: translateX(50%); background: #0f172a; color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 13px; z-index: 50; box-shadow: 0 8px 20px rgba(0,0,0,.3); }
   .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -150,16 +151,18 @@ document.getElementById("logoutBtn").addEventListener("click", () => {
   document.getElementById("loginView").classList.remove("hidden");
 });
 
-const ROLE_FA = { manager: "مدیر", teacher: "معلم", parent: "ولی" };
+const ROLE_FA = { manager: "مدیر", teacher: "معلم", parent: "ولی", student: "دانش‌آموز" };
 const TABS = [
-  { id: "dashboard", label: "داشبورد", roles: ["manager", "teacher", "parent"] },
+  { id: "dashboard", label: "داشبورد", roles: ["manager", "teacher", "parent", "student"] },
   { id: "attendance", label: "حضور و غیاب", roles: ["manager", "teacher"] },
+  { id: "myattendance", label: "حضور و غیاب", roles: ["parent", "student"] },
   { id: "students", label: "دانش‌آموزان", roles: ["manager", "teacher"] },
-  { id: "classes", label: "کلاس‌ها", roles: ["manager", "teacher", "parent"] },
+  { id: "classes", label: "کلاس‌ها", roles: ["manager", "teacher"] },
   { id: "staff", label: "پرسنل", roles: ["manager"] },
+  { id: "accounts", label: "حساب‌های کاربری", roles: ["manager"] },
   { id: "sms", label: "پنل پیامک", roles: ["manager", "teacher", "parent"] },
-  { id: "announcements", label: "اطلاعیه‌ها", roles: ["manager", "teacher", "parent"] },
-  { id: "homework", label: "تکالیف", roles: ["manager", "teacher", "parent"] },
+  { id: "announcements", label: "اطلاعیه‌ها", roles: ["manager", "teacher", "parent", "student"] },
+  { id: "homework", label: "تکالیف", roles: ["manager", "teacher", "parent", "student"] },
 ];
 
 async function enterApp() {
@@ -192,9 +195,11 @@ function render() {
   const m = document.getElementById("main");
   if (currentTab === "dashboard") return viewDashboard(m);
   if (currentTab === "attendance") return viewAttendance(m);
+  if (currentTab === "myattendance") return viewMyAttendance(m);
   if (currentTab === "students") return viewStudents(m);
   if (currentTab === "classes") return viewClasses(m);
   if (currentTab === "staff") return viewStaff(m);
+  if (currentTab === "accounts") return viewAccounts(m);
   if (currentTab === "sms") return viewSms(m);
   if (currentTab === "announcements") return viewAnnouncements(m);
   if (currentTab === "homework") return viewHomework(m);
@@ -203,6 +208,24 @@ function render() {
 /* ---------- Dashboard ---------- */
 async function viewDashboard(m) {
   m.innerHTML = '<div class="panel">در حال بارگذاری…</div>';
+  if ((session.role === "parent" || session.role === "student") && session.student_id) {
+    const stu = cache.students.find(s => s.id === session.student_id);
+    const rows = await get("/attendance?select=status,attendance_date&student_id=eq." + session.student_id + "&order=attendance_date.desc").catch(() => []);
+    const c = (s) => (rows || []).filter(r => r.status === s).length;
+    const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
+    m.innerHTML = `
+      <div class="panel">
+        <h2>${session.role === "parent" ? "فرزند شما" : "داشبورد من"} — ${stu ? stu.first_name + " " + stu.last_name : session.full_name}</h2>
+        <p>کلاس: <b>${stu ? className(stu.class_id) : "—"}</b></p>
+        <p style="margin-top:8px">مجموع حضور: <b>${c("present")}</b> &nbsp;|&nbsp; غیبت: <b>${c("absent")}</b> &nbsp;|&nbsp; تأخیر: <b>${c("late")}</b></p>
+      </div>
+      <div class="panel"><h2>آخرین وضعیت‌ها</h2>
+        ${(rows && rows.length) ? `<table><thead><tr><th>تاریخ</th><th>وضعیت</th></tr></thead><tbody>
+          ${rows.slice(0, 10).map(r => `<tr><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
+          </tbody></table>` : '<p class="muted">هنوز حضور و غیابی ثبت نشده است.</p>'}
+      </div>`;
+    return;
+  }
   const today = todayISO();
   const att = await get("/attendance?select=status&attendance_date=eq." + today).catch(() => []);
   const smsCount = await get("/sms_log?select=id").catch(() => []);
@@ -295,6 +318,15 @@ async function viewStudents(m) {
         <div class="field"><label>تلفن ولی</label><input id="stuPhone"></div>
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form>
     </div>
+    <div class="panel">
+      <h2>ورود گروهی از اکسل / CSV</h2>
+      <p class="muted" style="margin-bottom:10px">ستون‌های فایل: نام | نام خانوادگی | نام کلاس | نام ولی | تلفن ولی — اگه کلاسی توی سامانه نباشه، خودکار ساخته می‌شه و ردیف‌های تکراری رد می‌شن.</p>
+      <div class="row-actions">
+        <div class="field"><label>فایل اکسل یا CSV</label><input type="file" id="stuFile" accept=".xlsx,.xls,.csv"></div>
+        <button class="btn small secondary" id="stuTemplate" type="button">دانلود فایل نمونه</button>
+      </div>
+      <div id="stuImportResult" style="margin-top:10px"></div>
+    </div>
     <div class="panel"><h2>فهرست دانش‌آموزان (${cache.students.length})</h2>
       <table><thead><tr><th>نام و نام خانوادگی</th><th>کلاس</th><th>ولی</th><th>تلفن ولی</th></tr></thead><tbody>
       ${cache.students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td><td>${s.parent_name || "—"}</td><td>${s.parent_phone || "—"}</td></tr>`).join("")}
@@ -306,6 +338,9 @@ async function viewStudents(m) {
       toast("دانش‌آموز اضافه شد"); await refreshCache(); render();
     } catch { toast("خطا در افزودن"); }
   });
+  wireFileImport("stuFile", "stuImportResult", importStudents);
+  const stuTpl = document.getElementById("stuTemplate");
+  if (stuTpl) stuTpl.addEventListener("click", () => downloadTemplate("students"));
 }
 function val(id) { return document.getElementById(id).value.trim(); }
 
@@ -339,6 +374,15 @@ async function viewStaff(m) {
         <div class="field"><label>سمت</label><input id="stJob" required></div>
         <div class="field"><label>تلفن</label><input id="stPhone"></div>
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>
+    <div class="panel">
+      <h2>ورود گروهی از اکسل / CSV</h2>
+      <p class="muted" style="margin-bottom:10px">ستون‌های فایل: نام و نام خانوادگی | سمت | تلفن — ردیف‌های تکراری رد می‌شن.</p>
+      <div class="row-actions">
+        <div class="field"><label>فایل اکسل یا CSV</label><input type="file" id="staffFile" accept=".xlsx,.xls,.csv"></div>
+        <button class="btn small secondary" id="staffTemplate" type="button">دانلود فایل نمونه</button>
+      </div>
+      <div id="staffImportResult" style="margin-top:10px"></div>
+    </div>
     <div class="panel"><h2>پرسنل (${cache.staff.length})</h2>
       <table><thead><tr><th>نام</th><th>سمت</th><th>تلفن</th></tr></thead><tbody>
       ${cache.staff.map(s => `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td>${s.phone || "—"}</td></tr>`).join("")}
@@ -348,12 +392,16 @@ async function viewStaff(m) {
     try { await post("/staff", { full_name: val("stName"), job_title: val("stJob"), phone: val("stPhone") || null }); toast("پرسنل اضافه شد"); await refreshCache(); render(); }
     catch { toast("خطا در افزودن"); }
   });
+  wireFileImport("staffFile", "staffImportResult", importStaff);
+  const staffTpl = document.getElementById("staffTemplate");
+  if (staffTpl) staffTpl.addEventListener("click", () => downloadTemplate("staff"));
 }
 
 /* ---------- SMS log ---------- */
 async function viewSms(m) {
   m.innerHTML = '<div class="panel"><h2>پنل پیامک — ثبت سیستمی (پیامک واقعی ارسال نمی‌شود)</h2><div id="smsBody"><p class="muted">در حال بارگذاری…</p></div></div>';
-  const rows = await get("/sms_log?select=*&order=created_at.desc&limit=50").catch(() => []);
+  const smsFilter = session.role === "parent" && session.student_id ? "&student_id=eq." + session.student_id : "";
+  const rows = await get("/sms_log?select=*&order=created_at.desc&limit=50" + smsFilter).catch(() => []);
   const box = document.getElementById("smsBody");
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز پیامکی ثبت نشده است. با ثبت غیبت یک دانش‌آموز، رکورد پیامک به‌صورت خودکار اینجا ساخته می‌شود.</p>'; return; }
   box.innerHTML = `<table><thead><tr><th>تاریخ غیبت</th><th>گیرنده</th><th>متن پیام</th></tr></thead><tbody>
@@ -386,7 +434,12 @@ async function viewAnnouncements(m) {
 
 /* ---------- Homework ---------- */
 async function viewHomework(m) {
-  const rows = await get("/homework?select=*&order=created_at.desc").catch(() => []);
+  let hwFilter = "";
+  if ((session.role === "student" || session.role === "parent") && session.student_id) {
+    const st = await get("/students?select=class_id&id=eq." + session.student_id).catch(() => []);
+    if (st && st.length) hwFilter = "&class_id=eq." + st[0].class_id;
+  }
+  const rows = await get("/homework?select=*&order=created_at.desc" + hwFilter).catch(() => []);
   m.innerHTML = `
     ${session.role !== "parent" ? `<div class="panel"><h2>تکلیف جدید</h2>
       <form id="hwForm"><div class="form-grid">
@@ -407,6 +460,214 @@ async function viewHomework(m) {
     try { await post("/homework", { class_id: val("hwClass"), title: val("hwTitle"), description: val("hwDesc") || null, due_date: val("hwDue") || null }); toast("تکلیف ثبت شد"); render(); }
     catch { toast("خطا در ثبت"); }
   });
+}
+
+/* ---------- Bulk import (Excel / CSV) ---------- */
+function downloadTemplate(kind) {
+  const rows = kind === "students"
+    ? [["نام", "نام خانوادگی", "نام کلاس", "نام ولی", "تلفن ولی"], ["علی", "احمدی", "هفتم الف", "پدر علی احمدی", "09123456789"]]
+    : [["نام و نام خانوادگی", "سمت", "تلفن"], ["خانم محمدی", "معلم ریاضی", "09123456789"]];
+  const csv = "\uFEFF" + rows.map(r => r.join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = kind === "students" ? "students-template.csv" : "staff-template.csv";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+async function readRows(file) {
+  if (window.XLSX) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(ws, { defval: "" }).map(r => {
+      const o = {};
+      Object.keys(r).forEach(k => { o[String(k).trim()] = String(r[k]).trim(); });
+      return o;
+    });
+  }
+  if (/\.csv$/i.test(file.name)) {
+    const text = (await file.text()).replace(/^\uFEFF/, "");
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) return [];
+    const heads = lines[0].split(",").map(h => h.trim());
+    return lines.slice(1).map(l => {
+      const cells = l.split(",");
+      const o = {};
+      heads.forEach((h, i) => { o[h] = (cells[i] || "").trim(); });
+      return o;
+    });
+  }
+  throw new Error("xlsx-unavailable");
+}
+
+function pick(row, names) { for (const n of names) { if (row[n]) return row[n]; } return ""; }
+
+async function importStudents(rows) {
+  let added = 0, skipped = 0, errors = 0;
+  const existing = new Set(cache.students.map(s => s.first_name + "|" + s.last_name + "|" + s.class_id));
+  const toInsert = [];
+  for (const r of rows) {
+    const first = pick(r, ["نام", "first_name"]);
+    const last = pick(r, ["نام خانوادگی", "last_name"]);
+    const clsName = pick(r, ["نام کلاس", "کلاس", "class_name", "class"]);
+    if (!first || !last || !clsName) { errors++; continue; }
+    let cls = cache.classes.find(c => c.name === clsName);
+    if (!cls) {
+      const parts = clsName.split(/\s+/);
+      const grade = parts.length > 1 ? parts.slice(0, -1).join(" ") : clsName;
+      try {
+        const created = await post("/classes", { name: clsName, grade: grade, teacher_name: null });
+        cls = created[0];
+        cache.classes.push(cls);
+      } catch { errors++; continue; }
+    }
+    const key = first + "|" + last + "|" + cls.id;
+    if (existing.has(key)) { skipped++; continue; }
+    existing.add(key);
+    toInsert.push({ first_name: first, last_name: last, class_id: cls.id, parent_name: pick(r, ["نام ولی", "ولی", "parent_name"]) || null, parent_phone: pick(r, ["تلفن ولی", "تلفن", "parent_phone"]) || null });
+  }
+  if (toInsert.length) {
+    try { await post("/students", toInsert); added = toInsert.length; }
+    catch { errors += toInsert.length; }
+  }
+  await refreshCache();
+  return `<p>نتیجه ورود دانش‌آموزان: <b>${added}</b> نفر اضافه شد، <b>${skipped}</b> تکراری رد شد، <b>${errors}</b> ردیف خطادار.</p>`;
+}
+
+async function importStaff(rows) {
+  let errors = 0;
+  const payload = [];
+  for (const r of rows) {
+    const name = pick(r, ["نام و نام خانوادگی", "نام", "full_name"]);
+    const job = pick(r, ["سمت", "job_title"]);
+    if (!name || !job) { errors++; continue; }
+    payload.push({ full_name: name, job_title: job, phone: pick(r, ["تلفن", "phone"]) || null });
+  }
+  let added = 0;
+  if (payload.length) {
+    try {
+      const res = await api("/staff", { method: "POST", body: JSON.stringify(payload), headers: { "Prefer": "resolution=ignore-duplicates,return=representation" } });
+      added = res ? res.length : 0;
+    } catch { errors += payload.length; }
+  }
+  await refreshCache();
+  return `<p>نتیجه ورود پرسنل: <b>${added}</b> نفر اضافه شد، <b>${payload.length - added}</b> تکراری رد شد، <b>${errors}</b> ردیف خطادار.</p>`;
+}
+
+function wireFileImport(fileId, boxId, handler) {
+  const input = document.getElementById(fileId);
+  if (!input) return;
+  input.addEventListener("change", async () => {
+    if (!input.files || !input.files.length) return;
+    const box = document.getElementById(boxId);
+    if (box) box.innerHTML = '<p class="muted">در حال خواندن فایل…</p>';
+    try {
+      const rows = await readRows(input.files[0]);
+      const msg = await handler(rows);
+      render();
+      const newBox = document.getElementById(boxId);
+      if (newBox) newBox.innerHTML = msg;
+    } catch (e) {
+      const b2 = document.getElementById(boxId);
+      if (b2) b2.innerHTML = '<p style="color:#dc2626">خواندن فایل ممکن نشد؛ از «دانلود فایل نمونه» استفاده کنید و همان قالب را پر کنید.</p>';
+    }
+  });
+}
+
+/* ---------- My attendance (parent / student) ---------- */
+async function viewMyAttendance(m) {
+  m.innerHTML = '<div class="panel">در حال بارگذاری…</div>';
+  if (!session.student_id) { m.innerHTML = '<div class="panel"><p class="muted">این حساب به دانش‌آموزی وصل نیست.</p></div>'; return; }
+  const stu = cache.students.find(s => s.id === session.student_id);
+  const rows = await get("/attendance?select=*&student_id=eq." + session.student_id + "&order=attendance_date.desc").catch(() => []);
+  const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
+  m.innerHTML = `
+    <div class="panel"><h2>حضور و غیاب ${stu ? stu.first_name + " " + stu.last_name : ""} — ${stu ? className(stu.class_id) : ""}</h2>
+    ${(rows && rows.length) ? `<table><thead><tr><th>تاریخ</th><th>وضعیت</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
+      </tbody></table>` : '<p class="muted">هنوز حضور و غیابی ثبت نشده است.</p>'}
+    </div>`;
+}
+
+/* ---------- Accounts (manager) ---------- */
+async function viewAccounts(m) {
+  m.innerHTML = '<div class="panel">در حال بارگذاری…</div>';
+  const profiles = await get("/profiles?select=id,username,full_name,role,staff_id,student_id&order=role,full_name").catch(() => []);
+  const byStaff = {}, byStudentRole = {};
+  (profiles || []).forEach(p => {
+    if (p.staff_id) byStaff[p.staff_id] = p;
+    if (p.student_id) byStudentRole[p.student_id + "|" + p.role] = p;
+  });
+  const linkName = (p) => {
+    if (p.staff_id) { const s = cache.staff.find(x => x.id === p.staff_id); return s ? s.full_name : "—"; }
+    if (p.student_id) { return studentName(p.student_id); }
+    return "—";
+  };
+  m.innerHTML = `
+    <div class="panel"><h2>حساب‌های موجود (${(profiles || []).length})</h2>
+      <table><thead><tr><th>نام</th><th>نام کاربری</th><th>نقش</th><th>وابسته به</th><th>عملیات</th></tr></thead><tbody>
+      ${(profiles || []).map(p => `<tr>
+        <td>${p.full_name}</td><td dir="ltr" style="text-align:left">${p.username}</td>
+        <td><span class="badge role">${ROLE_FA[p.role] || p.role}</span></td><td>${linkName(p)}</td>
+        <td>
+          <button class="btn small secondary" data-reset="${p.id}">تغییر رمز</button>
+          ${p.username !== session.username ? `<button class="btn small secondary" data-del="${p.id}" data-name="${p.full_name}">حذف</button>` : ""}
+        </td></tr>`).join("")}
+      </tbody></table></div>
+
+    <div class="panel"><h2>ساخت حساب برای معلم‌ها / پرسنل</h2>
+      <div class="field" style="max-width:220px"><label>رمز حساب‌های جدید</label><input id="accPassTeacher" value="1234"></div>
+      <table><thead><tr><th>نام</th><th>سمت</th><th>نام کاربری</th><th></th></tr></thead><tbody>
+      ${cache.staff.map((s, i) => byStaff[s.id]
+        ? `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td colspan="2"><span class="badge role">حساب دارد: ${byStaff[s.id].username}</span></td></tr>`
+        : `<tr><td>${s.full_name}</td><td>${s.job_title}</td>
+           <td><input id="u-staff-${s.id}" value="t${s.phone ? s.phone.replace(/\D/g, "").slice(-6) : (101 + i)}" dir="ltr" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px"></td>
+           <td><button class="btn small" data-create="teacher" data-id="${s.id}">ساخت حساب</button></td></tr>`).join("")}
+      </tbody></table></div>
+
+    <div class="panel"><h2>ساخت حساب برای دانش‌آموز و ولی او</h2>
+      <div class="field" style="max-width:220px"><label>رمز حساب‌های جدید</label><input id="accPassFam" value="1234"></div>
+      <table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>حساب دانش‌آموز</th><th>حساب ولی</th></tr></thead><tbody>
+      ${cache.students.map((s, i) => {
+        const sa = byStudentRole[s.id + "|student"];
+        const pa = byStudentRole[s.id + "|parent"];
+        return `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td>
+        <td>${sa ? `<span class="badge role">${sa.username}</span>` : `<span style="display:flex;gap:6px"><input id="u-stu-${s.id}" value="s${101 + i}" dir="ltr" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px;width:90px"><button class="btn small" data-create="student" data-id="${s.id}">ساخت</button></span>`}</td>
+        <td>${pa ? `<span class="badge role">${pa.username}</span>` : `<span style="display:flex;gap:6px"><input id="u-par-${s.id}" value="p${s.parent_phone ? s.parent_phone.replace(/\D/g, "").slice(-6) : (201 + i)}" dir="ltr" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px;width:90px"><button class="btn small" data-create="parent" data-id="${s.id}">ساخت</button></span>`}</td></tr>`;
+      }).join("")}
+      </tbody></table>
+      <p class="muted" style="margin-top:8px">نام کاربری‌ها پیشنهاد خودکارند و قبل از ساخت می‌توانید عوضشان کنید. رمز پیش‌فرض را هم می‌توانید برای همه یک رمز بگذارید و بعداً از جدول «حساب‌های موجود» برای هر نفر جدا عوض کنید.</p></div>`;
+
+  m.querySelectorAll("[data-create]").forEach(btn => btn.addEventListener("click", async () => {
+    const kind = btn.dataset.create, id = btn.dataset.id;
+    let body = null;
+    if (kind === "teacher") {
+      const s = cache.staff.find(x => x.id === id);
+      body = { p_username: val("u-staff-" + id), p_password: val("accPassTeacher") || "1234", p_full_name: s.full_name, p_role: "teacher", p_staff_id: id, p_student_id: null };
+    } else if (kind === "student") {
+      const s = cache.students.find(x => x.id === id);
+      body = { p_username: val("u-stu-" + id), p_password: val("accPassFam") || "1234", p_full_name: s.first_name + " " + s.last_name, p_role: "student", p_staff_id: null, p_student_id: id };
+    } else {
+      const s = cache.students.find(x => x.id === id);
+      body = { p_username: val("u-par-" + id), p_password: val("accPassFam") || "1234", p_full_name: s.parent_name || ("ولی " + s.first_name + " " + s.last_name), p_role: "parent", p_staff_id: null, p_student_id: id };
+    }
+    if (!body.p_username) { toast("نام کاربری را وارد کنید"); return; }
+    btn.disabled = true;
+    try { await post("/rpc/create_account", body); toast("حساب ساخته شد: " + body.p_username); render(); }
+    catch { toast("ساخت حساب نشد — شاید نام کاربری تکراری است"); btn.disabled = false; }
+  }));
+  m.querySelectorAll("[data-reset]").forEach(btn => btn.addEventListener("click", async () => {
+    const np = prompt("رمز جدید را وارد کنید:");
+    if (!np) return;
+    try { await api("/rpc/set_account_password", { method: "POST", body: JSON.stringify({ p_id: btn.dataset.reset, p_password: np }) }); toast("رمز عوض شد"); }
+    catch { toast("خطا در تغییر رمز"); }
+  }));
+  m.querySelectorAll("[data-del]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!confirm("حساب «" + btn.dataset.name + "» حذف شود؟")) return;
+    try { await api("/profiles?id=eq." + btn.dataset.del, { method: "DELETE" }); toast("حساب حذف شد"); render(); }
+    catch { toast("خطا در حذف"); }
+  }));
 }
 
 /* ---------- Init ---------- */
