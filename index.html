@@ -62,6 +62,8 @@
   .confirm-actions { display: flex; gap: 8px; }
   .confirm-actions .btn { flex: 1; }
   .btn.danger { background: #b91c1c; color: #fff; border-color: #b91c1c; }
+  .edit-card { max-width: 430px; max-height: 88vh; overflow-y: auto; }
+  .edit-card .field input, .edit-card .field select, .edit-card .field textarea { width: 100%; padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 9px; font: inherit; }
   .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
 </style>
 </head>
@@ -119,6 +121,16 @@
     </div>
   </div>
 </div>
+<div id="editModal" class="confirm-overlay">
+  <div class="confirm-card edit-card">
+    <h3 id="editTitle" style="margin:0 0 12px;font-size:16px"></h3>
+    <div id="editFields"></div>
+    <div class="confirm-actions">
+      <button class="btn" id="editSave">ذخیره</button>
+      <button class="btn secondary" id="editCancel">انصراف</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const SUPABASE_URL = "https://noxycrhmudyqxihrhyvi.supabase.co";
@@ -150,6 +162,25 @@ function settleConfirm(v) {
 document.getElementById("confirmYes").addEventListener("click", () => settleConfirm(true));
 document.getElementById("confirmNo").addEventListener("click", () => settleConfirm(false));
 document.getElementById("confirmModal").addEventListener("click", (e) => { if (e.target.id === "confirmModal") settleConfirm(false); });
+let editSaveHandler = null;
+function openEdit(title, fieldsHtml, onSave) {
+  document.getElementById("editTitle").textContent = title;
+  document.getElementById("editFields").innerHTML = fieldsHtml;
+  editSaveHandler = onSave;
+  document.getElementById("editModal").style.display = "flex";
+}
+function closeEdit() { document.getElementById("editModal").style.display = "none"; editSaveHandler = null; }
+document.getElementById("editCancel").addEventListener("click", closeEdit);
+document.getElementById("editModal").addEventListener("click", (e) => { if (e.target.id === "editModal") closeEdit(); });
+document.getElementById("editSave").addEventListener("click", async () => {
+  if (!editSaveHandler) return;
+  const r = await editSaveHandler();
+  if (r !== false) closeEdit();
+});
+function eField(label, inner) { return `<div class="field" style="margin-bottom:10px"><label>${label}</label>${inner}</div>`; }
+function eInput(id, value, extra = "") { return `<input id="${id}" value="${(value == null ? "" : String(value)).replace(/"/g, "&quot;")}" ${extra}>`; }
+function eTextarea(id, value) { return `<textarea id="${id}" rows="3">${value == null ? "" : String(value)}</textarea>`; }
+function isoToJalaliParts(iso) { if (!iso) return { jy: "", jm: "", jd: "" }; const p = String(iso).slice(0, 10).split("-").map(Number); return toJalaali(p[0], p[1], p[2]); }
 function faDate(iso) {
   if (!iso) return "—";
   try { return new Date(iso + (iso.length === 10 ? "T00:00:00" : "")).toLocaleDateString("fa-IR"); } catch { return iso; }
@@ -426,12 +457,25 @@ async function loadAttRecent() {
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز ثبتی انجام نشده است.</p>'; return; }
   const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
   box.innerHTML = `<table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>تاریخ</th><th>وضعیت</th><th>ثبت‌کننده</th><th>عملیات</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td><td><button class="btn small secondary" data-del-att="${r.id}">حذف</button></td></tr>`).join("")}
+    ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-att="${r.id}">ویرایش</button><button class="btn small secondary" data-del-att="${r.id}">حذف</button></span></td></tr>`).join("")}
     </tbody></table>`;
   box.querySelectorAll("[data-del-att]").forEach(btn => btn.addEventListener("click", async () => {
     if (!(await askConfirm("این رکورد حضور و غیاب حذف شود؟"))) return;
     try { await api("/attendance?id=eq." + btn.dataset.delAtt, { method: "DELETE" }); toast("حذف شد"); loadAttRecent(); }
     catch { toast("خطا در حذف"); }
+  }));
+  box.querySelectorAll("[data-edit-att]").forEach(btn => btn.addEventListener("click", () => {
+    const r = rows.find(x => x.id === btn.dataset.editAtt);
+    if (!r) return;
+    openEdit("ویرایش حضور و غیاب — " + studentName(r.student_id),
+      eField("وضعیت", `<select id="edAttStatus">${Object.keys(STA).map(k => `<option value="${k}"${k === r.status ? " selected" : ""}>${STA[k]}</option>`).join("")}</select>`) +
+      `<p class="muted">تاریخ: ${faDate(r.attendance_date)} — اگه وضعیت رو به «غایب» تغییر بدید، یک رکورد پیامک تازه هم ثبت می‌شه.</p>`,
+      async () => {
+        try {
+          await api("/attendance?id=eq." + r.id, { method: "PATCH", body: JSON.stringify({ status: val("edAttStatus") }) });
+          toast("ذخیره شد"); loadAttRecent();
+        } catch { toast("خطا در ذخیره"); return false; }
+      });
   }));
 }
 
@@ -459,7 +503,7 @@ async function viewStudents(m) {
     </div>
     <div class="panel"><h2>فهرست دانش‌آموزان (${cache.students.length})</h2>
       <table><thead><tr><th>نام و نام خانوادگی</th><th>کلاس</th><th>ولی</th><th>تلفن ولی</th><th>عملیات</th></tr></thead><tbody>
-      ${cache.students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td><td>${s.parent_name || "—"}</td><td>${s.parent_phone || "—"}</td><td><button class="btn small secondary" data-del-student="${s.id}" data-name="${s.first_name} ${s.last_name}">حذف</button></td></tr>`).join("")}
+      ${cache.students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td><td>${s.parent_name || "—"}</td><td>${s.parent_phone || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-student="${s.id}">ویرایش</button><button class="btn small secondary" data-del-student="${s.id}" data-name="${s.first_name} ${s.last_name}">حذف</button></span></td></tr>`).join("")}
       </tbody></table></div>`;
   document.getElementById("stuForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -482,6 +526,22 @@ async function viewStudents(m) {
       toast("دانش‌آموز حذف شد"); await refreshCache(); render();
     } catch { toast("خطا در حذف"); }
   }));
+  m.querySelectorAll("[data-edit-student]").forEach(btn => btn.addEventListener("click", () => {
+    const s = cache.students.find(x => x.id === btn.dataset.editStudent);
+    if (!s) return;
+    openEdit("ویرایش دانش‌آموز",
+      eField("نام", eInput("edFirst", s.first_name)) +
+      eField("نام خانوادگی", eInput("edLast", s.last_name)) +
+      eField("کلاس", `<select id="edClass">${cache.classes.map(c => `<option value="${c.id}"${c.id === s.class_id ? " selected" : ""}>${c.name}</option>`).join("")}</select>`) +
+      eField("نام ولی", eInput("edParent", s.parent_name)) +
+      eField("تلفن ولی", eInput("edPhone", s.parent_phone, 'dir="ltr"')),
+      async () => {
+        try {
+          await api("/students?id=eq." + s.id, { method: "PATCH", body: JSON.stringify({ first_name: val("edFirst"), last_name: val("edLast"), class_id: val("edClass"), parent_name: val("edParent") || null, parent_phone: val("edPhone") || null }) });
+          toast("ذخیره شد"); await refreshCache(); render();
+        } catch { toast("خطا در ذخیره"); return false; }
+      });
+  }));
 }
 function val(id) { return document.getElementById(id).value.trim(); }
 
@@ -496,7 +556,7 @@ async function viewClasses(m) {
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>` : ""}
     <div class="panel"><h2>کلاس‌ها</h2>
       <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>معلم</th><th>تعداد دانش‌آموز</th><th>عملیات</th></tr></thead><tbody>
-      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.teacher_name || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></td></tr>`).join("")}
+      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.teacher_name || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-class="${c.id}">ویرایش</button><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></span></td></tr>`).join("")}
       </tbody></table></div>`;
   const f = document.getElementById("clsForm");
   if (f) f.addEventListener("submit", async (e) => {
@@ -514,6 +574,20 @@ async function viewClasses(m) {
       await api("/classes?id=eq." + id, { method: "DELETE" });
       toast("کلاس حذف شد"); await refreshCache(); render();
     } catch { toast("خطا در حذف"); }
+  }));
+  m.querySelectorAll("[data-edit-class]").forEach(btn => btn.addEventListener("click", () => {
+    const c = cache.classes.find(x => x.id === btn.dataset.editClass);
+    if (!c) return;
+    openEdit("ویرایش کلاس",
+      eField("نام کلاس", eInput("edClsName", c.name)) +
+      eField("پایه", eInput("edClsGrade", c.grade)) +
+      eField("معلم", eInput("edClsTeacher", c.teacher_name)),
+      async () => {
+        try {
+          await api("/classes?id=eq." + c.id, { method: "PATCH", body: JSON.stringify({ name: val("edClsName"), grade: val("edClsGrade"), teacher_name: val("edClsTeacher") || null }) });
+          toast("ذخیره شد"); await refreshCache(); render();
+        } catch { toast("خطا در ذخیره"); return false; }
+      });
   }));
 }
 
@@ -537,7 +611,7 @@ async function viewStaff(m) {
     </div>
     <div class="panel"><h2>پرسنل (${cache.staff.length})</h2>
       <table><thead><tr><th>نام</th><th>سمت</th><th>تلفن</th><th>عملیات</th></tr></thead><tbody>
-      ${cache.staff.map(s => `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td>${s.phone || "—"}</td><td><button class="btn small secondary" data-del-staff="${s.id}" data-name="${s.full_name}">حذف</button></td></tr>`).join("")}
+      ${cache.staff.map(s => `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td>${s.phone || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-staff="${s.id}">ویرایش</button><button class="btn small secondary" data-del-staff="${s.id}" data-name="${s.full_name}">حذف</button></span></td></tr>`).join("")}
       </tbody></table></div>`;
   document.getElementById("staffForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -556,6 +630,20 @@ async function viewStaff(m) {
       toast("حذف شد"); await refreshCache(); render();
     } catch { toast("خطا در حذف"); }
   }));
+  m.querySelectorAll("[data-edit-staff]").forEach(btn => btn.addEventListener("click", () => {
+    const s = cache.staff.find(x => x.id === btn.dataset.editStaff);
+    if (!s) return;
+    openEdit("ویرایش پرسنل",
+      eField("نام و نام خانوادگی", eInput("edStName", s.full_name)) +
+      eField("سمت", eInput("edStJob", s.job_title)) +
+      eField("تلفن", eInput("edStPhone", s.phone, 'dir="ltr"')),
+      async () => {
+        try {
+          await api("/staff?id=eq." + s.id, { method: "PATCH", body: JSON.stringify({ full_name: val("edStName"), job_title: val("edStJob"), phone: val("edStPhone") || null }) });
+          toast("ذخیره شد"); await refreshCache(); render();
+        } catch { toast("خطا در ذخیره"); return false; }
+      });
+  }));
 }
 
 /* ---------- SMS log ---------- */
@@ -567,12 +655,25 @@ async function viewSms(m) {
   const canDelSms = session.role === "manager" || session.role === "teacher";
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز پیامکی ثبت نشده است. با ثبت غیبت یک دانش‌آموز، رکورد پیامک به‌صورت خودکار اینجا ساخته می‌شود.</p>'; return; }
   box.innerHTML = `<table><thead><tr><th>تاریخ غیبت</th><th>گیرنده</th><th>متن پیام</th>${canDelSms ? "<th>عملیات</th>" : ""}</tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.recipient_phone || "—"}</td><td>${r.message}</td>${canDelSms ? `<td><button class="btn small secondary" data-del-sms="${r.id}">حذف</button></td>` : ""}</tr>`).join("")}
+    ${rows.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.recipient_phone || "—"}</td><td>${r.message}</td>${canDelSms ? `<td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-sms="${r.id}">ویرایش</button><button class="btn small secondary" data-del-sms="${r.id}">حذف</button></span></td>` : ""}</tr>`).join("")}
     </tbody></table>`;
   box.querySelectorAll("[data-del-sms]").forEach(btn => btn.addEventListener("click", async () => {
     if (!(await askConfirm("این رکورد پیامک حذف شود؟"))) return;
     try { await api("/sms_log?id=eq." + btn.dataset.delSms, { method: "DELETE" }); toast("حذف شد"); render(); }
     catch { toast("خطا در حذف"); }
+  }));
+  box.querySelectorAll("[data-edit-sms]").forEach(btn => btn.addEventListener("click", () => {
+    const r = rows.find(x => x.id === btn.dataset.editSms);
+    if (!r) return;
+    openEdit("ویرایش رکورد پیامک",
+      eField("تلفن گیرنده", eInput("edSmsPhone", r.recipient_phone, 'dir="ltr"')) +
+      eField("متن پیام", eTextarea("edSmsMsg", r.message)),
+      async () => {
+        try {
+          await api("/sms_log?id=eq." + r.id, { method: "PATCH", body: JSON.stringify({ recipient_phone: val("edSmsPhone") || null, message: val("edSmsMsg") }) });
+          toast("ذخیره شد"); render();
+        } catch { toast("خطا در ذخیره"); return false; }
+      });
   }));
 }
 
@@ -589,7 +690,7 @@ async function viewAnnouncements(m) {
       <div class="field" style="margin-top:10px"><label>متن</label><textarea id="annBody" rows="3" required></textarea></div>
       <button class="btn small">ثبت اطلاعیه</button></form></div>` : ""}
     <div class="panel"><h2>اطلاعیه‌ها</h2>
-      ${(rows && rows.length) ? rows.map(a => `<div style="padding:10px 0;border-bottom:1px solid #eef2f7"><b>${a.title}</b> <span class="badge role">${AUD_FA[a.audience] || a.audience}</span><div style="margin-top:4px">${a.body}</div><div class="muted">${faDate((a.created_at || "").slice(0, 10))}</div>${session.role === "manager" || session.role === "teacher" ? `<button class="btn small secondary" data-del-ann="${a.id}" style="margin-top:6px">حذف</button>` : ""}</div>`).join("") : '<p class="muted">اطلاعیه‌ای نیست.</p>'}
+      ${(rows && rows.length) ? rows.map(a => `<div style="padding:10px 0;border-bottom:1px solid #eef2f7"><b>${a.title}</b> <span class="badge role">${AUD_FA[a.audience] || a.audience}</span><div style="margin-top:4px">${a.body}</div><div class="muted">${faDate((a.created_at || "").slice(0, 10))}</div>${session.role === "manager" || session.role === "teacher" ? `<span style="display:inline-flex;gap:6px;margin-top:6px"><button class="btn small" data-edit-ann="${a.id}">ویرایش</button><button class="btn small secondary" data-del-ann="${a.id}">حذف</button></span>` : ""}</div>`).join("") : '<p class="muted">اطلاعیه‌ای نیست.</p>'}
     </div>`;
   const f = document.getElementById("annForm");
   if (f) f.addEventListener("submit", async (e) => {
@@ -601,6 +702,20 @@ async function viewAnnouncements(m) {
     if (!(await askConfirm("این اطلاعیه حذف شود؟"))) return;
     try { await api("/announcements?id=eq." + btn.dataset.delAnn, { method: "DELETE" }); toast("حذف شد"); render(); }
     catch { toast("خطا در حذف"); }
+  }));
+  m.querySelectorAll("[data-edit-ann]").forEach(btn => btn.addEventListener("click", () => {
+    const a = rows.find(x => x.id === btn.dataset.editAnn);
+    if (!a) return;
+    openEdit("ویرایش اطلاعیه",
+      eField("عنوان", eInput("edAnnTitle", a.title)) +
+      eField("متن", eTextarea("edAnnBody", a.body)) +
+      eField("مخاطب", `<select id="edAnnAud">${Object.keys(AUD_FA).map(k => `<option value="${k}"${k === a.audience ? " selected" : ""}>${AUD_FA[k]}</option>`).join("")}</select>`),
+      async () => {
+        try {
+          await api("/announcements?id=eq." + a.id, { method: "PATCH", body: JSON.stringify({ title: val("edAnnTitle"), body: val("edAnnBody"), audience: val("edAnnAud") }) });
+          toast("ذخیره شد"); render();
+        } catch { toast("خطا در ذخیره"); return false; }
+      });
   }));
 }
 
@@ -624,7 +739,7 @@ async function viewHomework(m) {
       <button class="btn small">ثبت تکلیف</button></form></div>` : ""}
     <div class="panel"><h2>تکالیف</h2>
       ${(rows && rows.length) ? `<table><thead><tr><th>عنوان</th><th>کلاس</th><th>مهلت</th><th>توضیح</th>${canEditHw ? "<th>عملیات</th>" : ""}</tr></thead><tbody>
-        ${rows.map(h => `<tr><td>${h.title}</td><td>${className(h.class_id)}</td><td>${faDate(h.due_date)}</td><td>${h.description || "—"}</td>${canEditHw ? `<td><button class="btn small secondary" data-del-hw="${h.id}">حذف</button></td>` : ""}</tr>`).join("")}
+        ${rows.map(h => `<tr><td>${h.title}</td><td>${className(h.class_id)}</td><td>${faDate(h.due_date)}</td><td>${h.description || "—"}</td>${canEditHw ? `<td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-hw="${h.id}">ویرایش</button><button class="btn small secondary" data-del-hw="${h.id}">حذف</button></span></td>` : ""}</tr>`).join("")}
         </tbody></table>` : '<p class="muted">تکلیفی ثبت نشده است.</p>'}
     </div>`;
   const f = document.getElementById("hwForm");
@@ -637,6 +752,21 @@ async function viewHomework(m) {
     if (!(await askConfirm("این تکلیف حذف شود؟"))) return;
     try { await api("/homework?id=eq." + btn.dataset.delHw, { method: "DELETE" }); toast("حذف شد"); render(); }
     catch { toast("خطا در حذف"); }
+  }));
+  m.querySelectorAll("[data-edit-hw]").forEach(btn => btn.addEventListener("click", () => {
+    const h = rows.find(x => x.id === btn.dataset.editHw);
+    if (!h) return;
+    openEdit("ویرایش تکلیف",
+      eField("عنوان", eInput("edHwTitle", h.title)) +
+      eField("کلاس", `<select id="edHwClass">${cache.classes.map(c => `<option value="${c.id}"${c.id === h.class_id ? " selected" : ""}>${c.name}</option>`).join("")}</select>`) +
+      eField("مهلت تحویل (شمسی)", jalaliFields("edHw", isoToJalaliParts(h.due_date))) +
+      eField("توضیح", eTextarea("edHwDesc", h.description)),
+      async () => {
+        try {
+          await api("/homework?id=eq." + h.id, { method: "PATCH", body: JSON.stringify({ title: val("edHwTitle"), class_id: val("edHwClass"), due_date: readJalali("edHw"), description: val("edHwDesc") || null }) });
+          toast("ذخیره شد"); render();
+        } catch { toast("خطا در ذخیره"); return false; }
+      });
   }));
 }
 
