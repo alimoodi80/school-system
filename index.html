@@ -574,16 +574,15 @@ async function viewClasses(m) {
         <div class="field"><label>نام کلاس</label><input id="clsName" required></div>
         <div class="field"><label>پایه</label><input id="clsGrade" required></div>
         <div class="field"><label>رشته</label><input id="clsField"></div>
-        <div class="field"><label>نام معلم</label><input id="clsTeacher"></div>
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>` : ""}
     <div class="panel"><h2>کلاس‌ها</h2>
-      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>رشته</th><th>معلم</th><th>تعداد دانش‌آموز</th><th>عملیات</th></tr></thead><tbody>
-      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.field || "—"}</td><td>${c.teacher_name || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-class="${c.id}">ویرایش</button><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></span></td></tr>`).join("")}
+      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>رشته</th><th>تعداد دانش‌آموز</th><th>عملیات</th></tr></thead><tbody>
+      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.field || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-class="${c.id}">ویرایش</button><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></span></td></tr>`).join("")}
       </tbody></table></div>`;
   const f = document.getElementById("clsForm");
   if (f) f.addEventListener("submit", async (e) => {
     e.preventDefault();
-    try { await post("/classes", { name: val("clsName"), grade: val("clsGrade"), field: val("clsField") || null, teacher_name: val("clsTeacher") || null }); toast("کلاس اضافه شد"); await refreshCache(); render(); }
+    try { await post("/classes", { name: val("clsName"), grade: val("clsGrade"), field: val("clsField") || null }); toast("کلاس اضافه شد"); await refreshCache(); render(); }
     catch { toast("خطا در افزودن"); }
   });
   m.querySelectorAll("[data-del-class]").forEach(btn => btn.addEventListener("click", async () => {
@@ -603,11 +602,10 @@ async function viewClasses(m) {
     openEdit("ویرایش کلاس",
       eField("نام کلاس", eInput("edClsName", c.name)) +
       eField("پایه", eInput("edClsGrade", c.grade)) +
-      eField("رشته", eInput("edClsField", c.field)) +
-      eField("معلم", eInput("edClsTeacher", c.teacher_name)),
+      eField("رشته", eInput("edClsField", c.field)),
       async () => {
         try {
-          await api("/classes?id=eq." + c.id, { method: "PATCH", body: JSON.stringify({ name: val("edClsName"), grade: val("edClsGrade"), field: val("edClsField") || null, teacher_name: val("edClsTeacher") || null }) });
+          await api("/classes?id=eq." + c.id, { method: "PATCH", body: JSON.stringify({ name: val("edClsName"), grade: val("edClsGrade"), field: val("edClsField") || null }) });
           toast("ذخیره شد"); await refreshCache(); render();
         } catch { toast("خطا در ذخیره"); return false; }
       });
@@ -957,7 +955,7 @@ async function importStudents(rows) {
       const parts = clsName.split(/\s+/);
       const grade = parts.length > 1 ? parts.slice(0, -1).join(" ") : clsName;
       try {
-        const created = await post("/classes", { name: clsName, grade: grade, teacher_name: null });
+        const created = await post("/classes", { name: clsName, grade: grade });
         cls = created[0];
         cache.classes.push(cls);
       } catch { errors++; continue; }
