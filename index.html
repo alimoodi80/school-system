@@ -241,7 +241,7 @@ async function api(path, opts = {}) {
   const text = await res.text();
   return text ? JSON.parse(text) : null;
 }
-const SCOPED_TABLES = ["classes", "students", "staff", "attendance", "sms_log", "announcements", "homework", "profiles"];
+const SCOPED_TABLES = ["classes", "students", "staff", "attendance", "sms_log", "announcements", "homework", "profiles", "class_subjects"];
 function scopeRead(path) {
   if (session && session.school_id && !path.includes("school_id=")) {
     const mm = path.match(/^\/([a-z_]+)(\?|$)/);
@@ -309,6 +309,7 @@ const TABS = [
   { id: "myattendance", label: "حضور و غیاب", roles: ["parent", "student"] },
   { id: "students", label: "دانش‌آموزان", roles: ["manager", "teacher"] },
   { id: "classes", label: "کلاس‌ها", roles: ["manager", "teacher"] },
+  { id: "subjects", label: "دروس کلاس‌ها", roles: ["manager", "teacher"] },
   { id: "staff", label: "پرسنل", roles: ["manager"] },
   { id: "accounts", label: "حساب‌های کاربری", roles: ["manager"] },
   { id: "sms", label: "پنل پیامک", roles: ["manager", "teacher", "parent"] },
@@ -337,13 +338,18 @@ async function enterApp() {
   render();
 }
 async function refreshCache() {
-  const [classes, students, staff] = await Promise.all([
-    get("/classes?select=*&order=grade"), get("/students?select=*&order=last_name"), get("/staff?select=*")
+  const [classes, students, staff, subjects] = await Promise.all([
+    get("/classes?select=*&order=grade").catch(() => []),
+    get("/students?select=*&order=last_name").catch(() => []),
+    get("/staff?select=*").catch(() => []),
+    get("/class_subjects?select=*&order=subject_name").catch(() => [])
   ]);
-  cache = { classes: classes || [], students: students || [], staff: staff || [] };
+  cache = { classes: classes || [], students: students || [], staff: staff || [], subjects: subjects || [] };
 }
 function className(id) { const c = cache.classes.find(c => c.id === id); return c ? c.name : "—"; }
 function studentName(id) { const s = cache.students.find(s => s.id === id); return s ? (s.first_name + " " + s.last_name) : "—"; }
+function subjectName(id) { const s = (cache.subjects || []).find(x => x.id === id); return s ? s.subject_name : "—"; }
+function staffNameOf(id) { const s = cache.staff.find(x => x.id === id); return s ? s.full_name : "—"; }
 
 function render() {
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === currentTab));
@@ -353,6 +359,7 @@ function render() {
   if (currentTab === "myattendance") return viewMyAttendance(m);
   if (currentTab === "students") return viewStudents(m);
   if (currentTab === "classes") return viewClasses(m);
+  if (currentTab === "subjects") return viewSubjects(m);
   if (currentTab === "staff") return viewStaff(m);
   if (currentTab === "accounts") return viewAccounts(m);
   if (currentTab === "sms") return viewSms(m);
@@ -409,6 +416,7 @@ async function viewAttendance(m) {
       <div class="row-actions">
         <div class="field"><label>کلاس</label><select id="attClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
         <div class="field"><label>تاریخ (شمسی)</label>${jalaliFields("att", tj)}</div>
+        <div class="field"><label>درس</label><select id="attSubject"><option value="">بدون درس (کل روز)</option></select></div>
         <button class="btn small" id="attLoad">نمایش فهرست</button>
       </div>
       <div id="attBody"><p class="muted">یک کلاس را انتخاب کنید و «نمایش فهرست» را بزنید.</p></div>
@@ -418,6 +426,15 @@ async function viewAttendance(m) {
       <div id="attRecent"><p class="muted">در حال بارگذاری…</p></div>
     </div>`;
   document.getElementById("attLoad").addEventListener("click", loadAttList);
+  const fillSubjects = () => {
+    const cid = document.getElementById("attClass").value;
+    const sel = document.getElementById("attSubject");
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">بدون درس (کل روز)</option>' + (cache.subjects || []).filter(s => s.class_id === cid).map(s => `<option value="${s.id}">${s.subject_name}${s.teacher_id ? " — " + staffNameOf(s.teacher_id) : ""}</option>`).join("");
+    if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  };
+  document.getElementById("attClass").addEventListener("change", fillSubjects);
+  fillSubjects();
   loadAttRecent();
 }
 async function loadAttList() {
@@ -426,8 +443,9 @@ async function loadAttList() {
   if (!date) { toast("تاریخ شمسی را درست وارد کنید"); return; }
   const body = document.getElementById("attBody");
   body.innerHTML = '<p class="muted">در حال بارگذاری…</p>';
+  const subjectId = document.getElementById("attSubject").value || null;
   const students = cache.students.filter(s => s.class_id === classId);
-  const existing = await get(`/attendance?select=student_id,status&class_id=eq.${classId}&attendance_date=eq.${date}`).catch(() => []);
+  const existing = await get(`/attendance?select=student_id,status&class_id=eq.${classId}&attendance_date=eq.${date}` + (subjectId ? `&subject_id=eq.${subjectId}` : "&subject_id=is.null")).catch(() => []);
   attState = {};
   (existing || []).forEach(r => attState[r.student_id] = r.status);
   if (!students.length) { body.innerHTML = '<p class="muted">این کلاس دانش‌آموزی ندارد.</p>'; return; }
@@ -446,9 +464,12 @@ async function loadAttList() {
     seg.querySelectorAll("button").forEach(x => x.className = x.dataset.status === attState[sid] ? "on-" + attState[sid] : "");
   }));
   document.getElementById("attSave").addEventListener("click", async () => {
-    const rows = students.map(s => ({ student_id: s.id, class_id: classId, attendance_date: date, status: attState[s.id] || "present", recorded_by: session.username, school_id: session.school_id }));
-    try { await upsert("/attendance", rows); toast("حضور و غیاب ثبت شد"); loadAttRecent(); }
-    catch (ex) { toast("خطا در ثبت"); }
+    const rows = students.map(s => ({ student_id: s.id, class_id: classId, attendance_date: date, status: attState[s.id] || "present", recorded_by: session.username, school_id: session.school_id, subject_id: subjectId }));
+    try {
+      await api(`/attendance?class_id=eq.${classId}&attendance_date=eq.${date}` + (subjectId ? `&subject_id=eq.${subjectId}` : "&subject_id=is.null"), { method: "DELETE" });
+      if (rows.length) await post("/attendance", rows);
+      toast("حضور و غیاب ثبت شد"); loadAttRecent();
+    } catch (ex) { toast("خطا در ثبت"); }
   });
 }
 async function loadAttRecent() {
@@ -456,8 +477,8 @@ async function loadAttRecent() {
   const rows = await get("/attendance?select=*&order=created_at.desc&limit=30").catch(() => []);
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز ثبتی انجام نشده است.</p>'; return; }
   const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
-  box.innerHTML = `<table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>تاریخ</th><th>وضعیت</th><th>ثبت‌کننده</th><th>عملیات</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-att="${r.id}">ویرایش</button><button class="btn small secondary" data-del-att="${r.id}">حذف</button></span></td></tr>`).join("")}
+  box.innerHTML = `<table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>تاریخ</th><th>وضعیت</th><th>ثبت‌کننده</th><th>عملیات</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "—"}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-att="${r.id}">ویرایش</button><button class="btn small secondary" data-del-att="${r.id}">حذف</button></span></td></tr>`).join("")}
     </tbody></table>`;
   box.querySelectorAll("[data-del-att]").forEach(btn => btn.addEventListener("click", async () => {
     if (!(await askConfirm("این رکورد حضور و غیاب حذف شود؟"))) return;
@@ -469,7 +490,7 @@ async function loadAttRecent() {
     if (!r) return;
     openEdit("ویرایش حضور و غیاب — " + studentName(r.student_id),
       eField("وضعیت", `<select id="edAttStatus">${Object.keys(STA).map(k => `<option value="${k}"${k === r.status ? " selected" : ""}>${STA[k]}</option>`).join("")}</select>`) +
-      `<p class="muted">تاریخ: ${faDate(r.attendance_date)} — اگه وضعیت رو به «غایب» تغییر بدید، یک رکورد پیامک تازه هم ثبت می‌شه.</p>`,
+      `<p class="muted">درس: ${r.subject_id ? subjectName(r.subject_id) : "بدون درس"} — تاریخ: ${faDate(r.attendance_date)} — اگه وضعیت رو به «غایب» تغییر بدید، یک رکورد پیامک تازه هم ثبت می‌شه.</p>`,
       async () => {
         try {
           await api("/attendance?id=eq." + r.id, { method: "PATCH", body: JSON.stringify({ status: val("edAttStatus") }) });
@@ -552,16 +573,17 @@ async function viewClasses(m) {
       <form id="clsForm"><div class="form-grid">
         <div class="field"><label>نام کلاس</label><input id="clsName" required></div>
         <div class="field"><label>پایه</label><input id="clsGrade" required></div>
+        <div class="field"><label>رشته</label><input id="clsField"></div>
         <div class="field"><label>نام معلم</label><input id="clsTeacher"></div>
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>` : ""}
     <div class="panel"><h2>کلاس‌ها</h2>
-      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>معلم</th><th>تعداد دانش‌آموز</th><th>عملیات</th></tr></thead><tbody>
-      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.teacher_name || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-class="${c.id}">ویرایش</button><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></span></td></tr>`).join("")}
+      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>رشته</th><th>معلم</th><th>تعداد دانش‌آموز</th><th>عملیات</th></tr></thead><tbody>
+      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.field || "—"}</td><td>${c.teacher_name || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-class="${c.id}">ویرایش</button><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></span></td></tr>`).join("")}
       </tbody></table></div>`;
   const f = document.getElementById("clsForm");
   if (f) f.addEventListener("submit", async (e) => {
     e.preventDefault();
-    try { await post("/classes", { name: val("clsName"), grade: val("clsGrade"), teacher_name: val("clsTeacher") || null }); toast("کلاس اضافه شد"); await refreshCache(); render(); }
+    try { await post("/classes", { name: val("clsName"), grade: val("clsGrade"), field: val("clsField") || null, teacher_name: val("clsTeacher") || null }); toast("کلاس اضافه شد"); await refreshCache(); render(); }
     catch { toast("خطا در افزودن"); }
   });
   m.querySelectorAll("[data-del-class]").forEach(btn => btn.addEventListener("click", async () => {
@@ -581,14 +603,76 @@ async function viewClasses(m) {
     openEdit("ویرایش کلاس",
       eField("نام کلاس", eInput("edClsName", c.name)) +
       eField("پایه", eInput("edClsGrade", c.grade)) +
+      eField("رشته", eInput("edClsField", c.field)) +
       eField("معلم", eInput("edClsTeacher", c.teacher_name)),
       async () => {
         try {
-          await api("/classes?id=eq." + c.id, { method: "PATCH", body: JSON.stringify({ name: val("edClsName"), grade: val("edClsGrade"), teacher_name: val("edClsTeacher") || null }) });
+          await api("/classes?id=eq." + c.id, { method: "PATCH", body: JSON.stringify({ name: val("edClsName"), grade: val("edClsGrade"), field: val("edClsField") || null, teacher_name: val("edClsTeacher") || null }) });
           toast("ذخیره شد"); await refreshCache(); render();
         } catch { toast("خطا در ذخیره"); return false; }
       });
   }));
+}
+
+/* ---------- Class subjects ---------- */
+async function viewSubjects(m) {
+  const isMgr = session.role === "manager";
+  m.innerHTML = `
+    <div class="panel">
+      <h2>دروس کلاس‌ها</h2>
+      <div class="row-actions">
+        <div class="field"><label>کلاس</label><select id="subClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+      </div>
+      <div id="subBody"></div>
+    </div>
+    ${isMgr ? `<div class="panel"><h2>افزودن درس به کلاس انتخاب‌شده</h2>
+      <form id="subForm"><div class="form-grid">
+        <div class="field"><label>نام درس</label><input id="subName" required></div>
+        <div class="field"><label>دبیر</label><select id="subTeacher"><option value="">— بدون دبیر —</option>${cache.staff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join("")}</select></div>
+      </div><button class="btn small" style="margin-top:10px">افزودن درس</button></form></div>` : ""}`;
+  const body = document.getElementById("subBody");
+  const draw = () => {
+    const sel = document.getElementById("subClass");
+    if (!sel) return;
+    const cid = sel.value;
+    const list = (cache.subjects || []).filter(s => s.class_id === cid);
+    body.innerHTML = list.length ? `<table><thead><tr><th>درس</th><th>دبیر</th>${isMgr ? "<th>عملیات</th>" : ""}</tr></thead><tbody>
+      ${list.map(s => `<tr><td>${s.subject_name}</td><td>${s.teacher_id ? staffNameOf(s.teacher_id) : "—"}</td>${isMgr ? `<td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-subject="${s.id}">ویرایش</button><button class="btn small secondary" data-del-subject="${s.id}" data-name="${s.subject_name}">حذف</button></span></td>` : ""}</tr>`).join("")}
+      </tbody></table>` : '<p class="muted">برای این کلاس هنوز درسی ثبت نشده است.</p>';
+    if (!isMgr) return;
+    body.querySelectorAll("[data-del-subject]").forEach(btn => btn.addEventListener("click", async () => {
+      if (!(await askConfirm("درس «" + btn.dataset.name + "» از این کلاس حذف شود؟"))) return;
+      const id = btn.dataset.delSubject;
+      try {
+        await api("/attendance?subject_id=eq." + id, { method: "PATCH", body: JSON.stringify({ subject_id: null }) });
+        await api("/class_subjects?id=eq." + id, { method: "DELETE" });
+        toast("درس حذف شد"); await refreshCache(); draw();
+      } catch { toast("خطا در حذف"); }
+    }));
+    body.querySelectorAll("[data-edit-subject]").forEach(btn => btn.addEventListener("click", () => {
+      const s = (cache.subjects || []).find(x => x.id === btn.dataset.editSubject);
+      if (!s) return;
+      openEdit("ویرایش درس",
+        eField("نام درس", eInput("edSubName", s.subject_name)) +
+        eField("دبیر", `<select id="edSubTeacher"><option value="">— بدون دبیر —</option>${cache.staff.map(t => `<option value="${t.id}"${t.id === s.teacher_id ? " selected" : ""}>${t.full_name}</option>`).join("")}</select>`),
+        async () => {
+          try {
+            await api("/class_subjects?id=eq." + s.id, { method: "PATCH", body: JSON.stringify({ subject_name: val("edSubName"), teacher_id: val("edSubTeacher") || null }) });
+            toast("ذخیره شد"); await refreshCache(); draw();
+          } catch { toast("خطا در ذخیره"); return false; }
+        });
+    }));
+  };
+  document.getElementById("subClass").addEventListener("change", draw);
+  draw();
+  const f = document.getElementById("subForm");
+  if (f) f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await post("/class_subjects", { class_id: document.getElementById("subClass").value, subject_name: val("subName"), teacher_id: val("subTeacher") || null });
+      toast("درس اضافه شد"); document.getElementById("subName").value = ""; await refreshCache(); draw();
+    } catch { toast("خطا در افزودن"); }
+  });
 }
 
 /* ---------- Staff ---------- */
@@ -598,11 +682,11 @@ async function viewStaff(m) {
       <form id="staffForm"><div class="form-grid">
         <div class="field"><label>نام و نام خانوادگی</label><input id="stName" required></div>
         <div class="field"><label>سمت</label><input id="stJob" required></div>
-        <div class="field"><label>تلفن</label><input id="stPhone"></div>
+        <div class="field"><label>شماره پرسنلی</label><input id="stCode"></div>
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>
     <div class="panel">
       <h2>ورود گروهی از اکسل / CSV</h2>
-      <p class="muted" style="margin-bottom:10px">ستون‌های فایل: نام و نام خانوادگی | سمت | تلفن — ردیف‌های تکراری رد می‌شن.</p>
+      <p class="muted" style="margin-bottom:10px">ستون‌های فایل: نام و نام خانوادگی | سمت | شماره پرسنلی — ردیف‌های تکراری رد می‌شن.</p>
       <div class="row-actions">
         <div class="field"><label>فایل اکسل یا CSV</label><input type="file" id="staffFile" accept=".xlsx,.xls,.csv"></div>
         <button class="btn small secondary" id="staffTemplate" type="button">دانلود فایل نمونه</button>
@@ -610,12 +694,12 @@ async function viewStaff(m) {
       <div id="staffImportResult" style="margin-top:10px"></div>
     </div>
     <div class="panel"><h2>پرسنل (${cache.staff.length})</h2>
-      <table><thead><tr><th>نام</th><th>سمت</th><th>تلفن</th><th>عملیات</th></tr></thead><tbody>
-      ${cache.staff.map(s => `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td>${s.phone || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-staff="${s.id}">ویرایش</button><button class="btn small secondary" data-del-staff="${s.id}" data-name="${s.full_name}">حذف</button></span></td></tr>`).join("")}
+      <table><thead><tr><th>نام</th><th>سمت</th><th>شماره پرسنلی</th><th>عملیات</th></tr></thead><tbody>
+      ${cache.staff.map(s => `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td>${s.personnel_code || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-staff="${s.id}">ویرایش</button><button class="btn small secondary" data-del-staff="${s.id}" data-name="${s.full_name}">حذف</button></span></td></tr>`).join("")}
       </tbody></table></div>`;
   document.getElementById("staffForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-    try { await post("/staff", { full_name: val("stName"), job_title: val("stJob"), phone: val("stPhone") || null }); toast("پرسنل اضافه شد"); await refreshCache(); render(); }
+    try { await post("/staff", { full_name: val("stName"), job_title: val("stJob"), personnel_code: val("stCode") || null }); toast("پرسنل اضافه شد"); await refreshCache(); render(); }
     catch { toast("خطا در افزودن"); }
   });
   wireFileImport("staffFile", "staffImportResult", importStaff);
@@ -636,10 +720,10 @@ async function viewStaff(m) {
     openEdit("ویرایش پرسنل",
       eField("نام و نام خانوادگی", eInput("edStName", s.full_name)) +
       eField("سمت", eInput("edStJob", s.job_title)) +
-      eField("تلفن", eInput("edStPhone", s.phone, 'dir="ltr"')),
+      eField("شماره پرسنلی", eInput("edStCode", s.personnel_code, 'dir="ltr"')),
       async () => {
         try {
-          await api("/staff?id=eq." + s.id, { method: "PATCH", body: JSON.stringify({ full_name: val("edStName"), job_title: val("edStJob"), phone: val("edStPhone") || null }) });
+          await api("/staff?id=eq." + s.id, { method: "PATCH", body: JSON.stringify({ full_name: val("edStName"), job_title: val("edStJob"), personnel_code: val("edStCode") || null }) });
           toast("ذخیره شد"); await refreshCache(); render();
         } catch { toast("خطا در ذخیره"); return false; }
       });
@@ -774,7 +858,7 @@ async function viewHomework(m) {
 function downloadTemplate(kind) {
   const rows = kind === "students"
     ? [["نام", "نام خانوادگی", "نام کلاس", "نام ولی", "تلفن ولی"], ["علی", "احمدی", "هفتم الف", "پدر علی احمدی", "09123456789"]]
-    : [["نام و نام خانوادگی", "سمت", "تلفن"], ["خانم محمدی", "معلم ریاضی", "09123456789"]];
+    : [["نام و نام خانوادگی", "سمت", "شماره پرسنلی"], ["خانم محمدی", "معلم ریاضی", "1024"]];
   const csv = "\uFEFF" + rows.map(r => r.join(",")).join("\r\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -881,7 +965,7 @@ async function importStudents(rows) {
     const key = first + "|" + last + "|" + cls.id;
     if (existing.has(key)) { skipped++; continue; }
     existing.add(key);
-    toInsert.push({ first_name: first, last_name: last, class_id: cls.id, parent_name: pick(r, ["نام ولی", "ولی", "parent_name"]) || null, parent_phone: fixPhone(pick(r, ["تلفن ولی", "تلفن", "parent_phone"])) || null });
+    toInsert.push({ first_name: first, last_name: last, class_id: cls.id, parent_name: pick(r, ["نام ولی", "ولی", "parent_name"]) || null, parent_phone: fixPhone(pick(r, ["تلفن ولی", "تلفن", "parent_phone"])) || null, school_id: session.school_id });
   }
   if (toInsert.length) {
     try { await post("/students", toInsert); added = toInsert.length; }
@@ -898,7 +982,7 @@ async function importStaff(rows) {
     const name = pick(r, ["نام و نام خانوادگی", "نام", "full_name"]);
     const job = pick(r, ["سمت", "job_title"]);
     if (!name || !job) { errors++; continue; }
-    payload.push({ full_name: name, job_title: job, phone: fixPhone(pick(r, ["تلفن", "phone"])) || null });
+    payload.push({ full_name: name, job_title: job, personnel_code: normDigits(pick(r, ["شماره پرسنلی", "کد پرسنلی", "پرسنلی", "personnel_code", "code"])) || null, school_id: session.school_id });
   }
   let added = 0;
   if (payload.length) {
@@ -940,8 +1024,8 @@ async function viewMyAttendance(m) {
   const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
   m.innerHTML = `
     <div class="panel"><h2>حضور و غیاب ${stu ? stu.first_name + " " + stu.last_name : ""} — ${stu ? className(stu.class_id) : ""}</h2>
-    ${(rows && rows.length) ? `<table><thead><tr><th>تاریخ</th><th>وضعیت</th></tr></thead><tbody>
-      ${rows.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
+    ${(rows && rows.length) ? `<table><thead><tr><th>تاریخ</th><th>درس</th><th>وضعیت</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "—"}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
       </tbody></table>` : '<p class="muted">هنوز حضور و غیابی ثبت نشده است.</p>'}
     </div>`;
 }
@@ -979,7 +1063,7 @@ async function viewAccounts(m) {
       ${cache.staff.map((s, i) => byStaff[s.id]
         ? `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td colspan="2"><span class="badge role">حساب دارد: ${byStaff[s.id].username}</span></td></tr>`
         : `<tr><td>${s.full_name}</td><td>${s.job_title}</td>
-           <td><input id="u-staff-${s.id}" value="t${s.phone ? s.phone.replace(/\D/g, "").slice(-6) : (101 + i)}" dir="ltr" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px"></td>
+           <td><input id="u-staff-${s.id}" value="t${s.personnel_code ? String(s.personnel_code).replace(/\D/g, "") : (101 + i)}" dir="ltr" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px"></td>
            <td><button class="btn small" data-create="teacher" data-id="${s.id}">ساخت حساب</button></td></tr>`).join("")}
       </tbody></table></div>
 
