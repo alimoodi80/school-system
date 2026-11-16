@@ -991,7 +991,7 @@ async function loadGrades() {
       else if (gmap[inp.dataset.student]) dels.push(inp.dataset.student);
     });
     try {
-      if (ups.length) await upsert("/grades", ups);
+      if (ups.length) await upsert("/grades?on_conflict=student_id,subject_id", ups);
       for (const sid of dels) await api("/grades?subject_id=eq." + subjectId + "&student_id=eq." + sid, { method: "DELETE" });
       toast("نمرات ثبت شد"); loadGrades();
     } catch { toast("خطا در ثبت نمرات"); }
