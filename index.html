@@ -49,10 +49,13 @@
   .seg button.on-present { background: #16a34a; color: #fff; }
   .seg button.on-absent { background: #dc2626; color: #fff; }
   .seg button.on-late { background: #d97706; color: #fff; }
+  .seg button.on-excused { background: #2563eb; color: #fff; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; }
   .badge.present { background: #dcfce7; color: #166534; }
   .badge.absent { background: #fee2e2; color: #991b1b; }
   .badge.late { background: #fef3c7; color: #92400e; }
+  .badge.excused { background: #dbeafe; color: #1e40af; }
+  @media print { .topbar, #tabs, button { display: none !important; } }
   .badge.role { background: #dbeafe; color: #1e40af; }
   .muted { color: #64748b; font-size: 12px; }
   .toast { position: fixed; bottom: 18px; right: 50%; transform: translateX(50%); background: #0f172a; color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 13px; z-index: 50; box-shadow: 0 8px 20px rgba(0,0,0,.3); }
@@ -241,7 +244,7 @@ async function api(path, opts = {}) {
   const text = await res.text();
   return text ? JSON.parse(text) : null;
 }
-const SCOPED_TABLES = ["classes", "students", "staff", "attendance", "sms_log", "announcements", "homework", "profiles", "class_subjects"];
+const SCOPED_TABLES = ["classes", "students", "staff", "attendance", "sms_log", "announcements", "homework", "profiles", "class_subjects", "academic_years", "grades", "discipline_types", "discipline_records", "delegations"];
 function scopeRead(path) {
   if (session && session.school_id && !path.includes("school_id=")) {
     const mm = path.match(/^\/([a-z_]+)(\?|$)/);
@@ -302,14 +305,19 @@ document.getElementById("logoutBtn").addEventListener("click", () => {
   document.getElementById("loginView").classList.remove("hidden");
 });
 
-const ROLE_FA = { manager: "مدیر", teacher: "معلم", parent: "ولی", student: "دانش‌آموز" };
+const ROLE_FA = { manager: "مدیر", teacher: "معلم", deputy: "معاون آموزشی", parent: "ولی", student: "دانش‌آموز" };
 const TABS = [
-  { id: "dashboard", label: "داشبورد", roles: ["manager", "teacher", "parent", "student"] },
-  { id: "attendance", label: "حضور و غیاب", roles: ["manager", "teacher"] },
+  { id: "dashboard", label: "داشبورد", roles: ["manager", "teacher", "deputy", "parent", "student"] },
+  { id: "attendance", label: "حضور و غیاب", roles: ["manager", "teacher", "deputy"] },
   { id: "myattendance", label: "حضور و غیاب", roles: ["parent", "student"] },
-  { id: "students", label: "دانش‌آموزان", roles: ["manager", "teacher"] },
-  { id: "classes", label: "کلاس‌ها", roles: ["manager", "teacher"] },
-  { id: "subjects", label: "دروس کلاس‌ها", roles: ["manager", "teacher"] },
+  { id: "students", label: "دانش‌آموزان", roles: ["manager", "teacher", "deputy"] },
+  { id: "classes", label: "کلاس‌ها", roles: ["manager", "teacher", "deputy"] },
+  { id: "subjects", label: "دروس کلاس‌ها", roles: ["manager", "teacher", "deputy"] },
+  { id: "years", label: "سال تحصیلی", roles: ["manager"] },
+  { id: "grades", label: "نمرات", roles: ["manager", "teacher", "deputy"] },
+  { id: "discipline", label: "کاربرگ انضباطی", roles: ["manager", "teacher", "deputy"] },
+  { id: "reports", label: "گزارش‌ها", roles: ["manager", "deputy"] },
+  { id: "backup", label: "پشتیبان‌گیری", roles: ["manager"] },
   { id: "staff", label: "پرسنل", roles: ["manager"] },
   { id: "accounts", label: "حساب‌های کاربری", roles: ["manager"] },
   { id: "sms", label: "پنل پیامک", roles: ["manager", "teacher", "parent"] },
@@ -325,9 +333,13 @@ async function enterApp() {
     if (sc && sc.length) { session.school_name = sc[0].name; localStorage.setItem("school_session", JSON.stringify(session)); }
   }
   document.getElementById("whoAmI").textContent = session.full_name + " — " + (ROLE_FA[session.role] || session.role) + (session.school_name ? " — " + session.school_name : "");
+  if (session.role !== "manager" && session.id) {
+    const dg = await get("/delegations?select=permission&profile_id=eq." + session.id).catch(() => []);
+    session.perms = (dg || []).map(r => r.permission);
+  } else session.perms = [];
   const nav = document.getElementById("tabs");
   nav.innerHTML = "";
-  TABS.filter(t => t.roles.includes(session.role)).forEach(t => {
+  TABS.filter(t => t.roles.includes(session.role) || (session.perms || []).includes(t.id)).forEach(t => {
     const b = document.createElement("button");
     b.textContent = t.label; b.dataset.tab = t.id;
     b.addEventListener("click", () => { currentTab = t.id; render(); });
@@ -338,18 +350,35 @@ async function enterApp() {
   render();
 }
 async function refreshCache() {
-  const [classes, students, staff, subjects] = await Promise.all([
+  const [classes, students, staff, subjects, years, discTypes] = await Promise.all([
     get("/classes?select=*&order=grade").catch(() => []),
     get("/students?select=*&order=last_name").catch(() => []),
     get("/staff?select=*").catch(() => []),
-    get("/class_subjects?select=*&order=subject_name").catch(() => [])
+    get("/class_subjects?select=*&order=subject_name").catch(() => []),
+    get("/academic_years?select=*&order=created_at").catch(() => []),
+    get("/discipline_types?select=*&order=title").catch(() => [])
   ]);
-  cache = { classes: classes || [], students: students || [], staff: staff || [], subjects: subjects || [] };
+  cache = { classes: classes || [], students: students || [], staff: staff || [], subjects: subjects || [], years: years || [], discTypes: discTypes || [] };
 }
 function className(id) { const c = cache.classes.find(c => c.id === id); return c ? c.name : "—"; }
 function studentName(id) { const s = cache.students.find(s => s.id === id); return s ? (s.first_name + " " + s.last_name) : "—"; }
 function subjectName(id) { const s = (cache.subjects || []).find(x => x.id === id); return s ? s.subject_name : "—"; }
 function staffNameOf(id) { const s = cache.staff.find(x => x.id === id); return s ? s.full_name : "—"; }
+function yearName(id) { const y = (cache.years || []).find(x => x.id === id); return y ? y.name : "—"; }
+function can(tab) { return session.role === "manager" || (session.perms || []).includes(tab); }
+function currentYear() { return (cache.years || []).find(y => y.is_current) || null; }
+function mySubjectIds() {
+  if (session.role !== "teacher" || !session.staff_id) return null;
+  const mine = (cache.subjects || []).filter(s => s.teacher_id === session.staff_id);
+  return mine.length ? mine : null;
+}
+function myClasses() {
+  const mine = mySubjectIds();
+  if (!mine) return cache.classes;
+  const ids = new Set(mine.map(s => s.class_id));
+  const list = cache.classes.filter(c => ids.has(c.id));
+  return list.length ? list : cache.classes;
+}
 
 function render() {
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === currentTab));
@@ -360,6 +389,11 @@ function render() {
   if (currentTab === "students") return viewStudents(m);
   if (currentTab === "classes") return viewClasses(m);
   if (currentTab === "subjects") return viewSubjects(m);
+  if (currentTab === "years") return viewYears(m);
+  if (currentTab === "grades") return viewGrades(m);
+  if (currentTab === "discipline") return viewDiscipline(m);
+  if (currentTab === "reports") return viewReports(m);
+  if (currentTab === "backup") return viewBackup(m);
   if (currentTab === "staff") return viewStaff(m);
   if (currentTab === "accounts") return viewAccounts(m);
   if (currentTab === "sms") return viewSms(m);
@@ -374,7 +408,7 @@ async function viewDashboard(m) {
     const stu = cache.students.find(s => s.id === session.student_id);
     const rows = await get("/attendance?select=status,attendance_date&student_id=eq." + session.student_id + "&order=attendance_date.desc").catch(() => []);
     const c = (s) => (rows || []).filter(r => r.status === s).length;
-    const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
+    const STA = { present: "حاضر", absent: "غایب", late: "تأخیر", excused: "غیبت موجه" };
     m.innerHTML = `
       <div class="panel">
         <h2>${session.role === "parent" ? "فرزند شما" : "داشبورد من"} — ${stu ? stu.first_name + " " + stu.last_name : session.full_name}</h2>
@@ -414,7 +448,7 @@ async function viewAttendance(m) {
     <div class="panel">
       <h2>ثبت حضور و غیاب</h2>
       <div class="row-actions">
-        <div class="field"><label>کلاس</label><select id="attClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+        <div class="field"><label>کلاس</label><select id="attClass">${myClasses().map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
         <div class="field"><label>تاریخ (شمسی)</label>${jalaliFields("att", tj)}</div>
         <div class="field"><label>درس</label><select id="attSubject"><option value="">بدون درس (کل روز)</option></select></div>
         <button class="btn small" id="attLoad">نمایش فهرست</button>
@@ -430,7 +464,7 @@ async function viewAttendance(m) {
     const cid = document.getElementById("attClass").value;
     const sel = document.getElementById("attSubject");
     const cur = sel.value;
-    sel.innerHTML = '<option value="">بدون درس (کل روز)</option>' + (cache.subjects || []).filter(s => s.class_id === cid).map(s => `<option value="${s.id}">${s.subject_name}${s.teacher_id ? " — " + staffNameOf(s.teacher_id) : ""}</option>`).join("");
+    sel.innerHTML = '<option value="">بدون درس (کل روز)</option>' + (cache.subjects || []).filter(s => s.class_id === cid && (!mySubjectIds() || s.teacher_id === session.staff_id)).map(s => `<option value="${s.id}">${s.subject_name}${s.teacher_id ? " — " + staffNameOf(s.teacher_id) : ""}</option>`).join("");
     if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
   };
   document.getElementById("attClass").addEventListener("change", fillSubjects);
@@ -450,12 +484,12 @@ async function loadAttList() {
   (existing || []).forEach(r => attState[r.student_id] = r.status);
   if (!students.length) { body.innerHTML = '<p class="muted">این کلاس دانش‌آموزی ندارد.</p>'; return; }
   body.innerHTML = `
-    <table><thead><tr><th>دانش‌آموز</th><th>وضعیت</th></tr></thead><tbody>
+    <table><thead><tr><th>دانش‌آموز</th><th>وضعیت</th><th>انضباطی</th></tr></thead><tbody>
     ${students.map(s => `
       <tr><td>${s.first_name} ${s.last_name}</td>
       <td><span class="seg" data-student="${s.id}">
-        ${["present", "absent", "late"].map(st => `<button type="button" data-status="${st}" class="${(attState[s.id] || "present") === st ? "on-" + st : ""}">${{ present: "حاضر", absent: "غایب", late: "تأخیر" }[st]}</button>`).join("")}
-      </span></td></tr>`).join("")}
+        ${["present", "absent", "late", "excused"].map(st => `<button type="button" data-status="${st}" class="${(attState[s.id] || "present") === st ? "on-" + st : ""}">${{ present: "حاضر", absent: "غایب", late: "تأخیر", excused: "غیبت موجه" }[st]}</button>`).join("")}
+      </span></td><td><button type="button" class="btn small secondary" data-disc="${s.id}">ثبت مورد</button></td></tr>`).join("")}
     </tbody></table>
     <button class="btn" id="attSave" style="margin-top:14px">ثبت حضور و غیاب</button>`;
   body.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
@@ -463,7 +497,22 @@ async function loadAttList() {
     attState[sid] = b.dataset.status;
     seg.querySelectorAll("button").forEach(x => x.className = x.dataset.status === attState[sid] ? "on-" + attState[sid] : "");
   }));
-  document.getElementById("attSave").addEventListener("click", async () => {
+  body.querySelectorAll("[data-disc]").forEach(b => b.addEventListener("click", () => {
+    const stu = students.find(x => x.id === b.dataset.disc);
+    if (!(cache.discTypes || []).length) { toast("مدیر هنوز موردی در لیست انضباطی تعریف نکرده است"); return; }
+    openEdit("ثبت مورد انضباطی — " + stu.first_name + " " + stu.last_name,
+      eField("مورد", `<select id="dType">${(cache.discTypes || []).map(t => `<option value="${t.title}">${t.title}</option>`).join("")}</select>`) +
+      eField("توضیحات", eInput("dDesc", "")),
+      async () => {
+        try {
+          await post("/discipline_records", { class_id: classId, student_id: stu.id, subject_id: subjectId, record_date: date, type_title: val("dType"), description: val("dDesc") || null, recorded_by: session.username });
+          toast("مورد انضباطی ثبت شد");
+        } catch { toast("خطا در ثبت"); return false; }
+      });
+  }));
+  const attSaveEl = document.getElementById("attSave");
+  if (session.role === "deputy") { attSaveEl.remove(); body.querySelectorAll(".seg button").forEach(b => { b.disabled = true; }); }
+  else attSaveEl.addEventListener("click", async () => {
     const rows = students.map(s => ({ student_id: s.id, class_id: classId, attendance_date: date, status: attState[s.id] || "present", recorded_by: session.username, school_id: session.school_id, subject_id: subjectId }));
     try {
       await api(`/attendance?class_id=eq.${classId}&attendance_date=eq.${date}` + (subjectId ? `&subject_id=eq.${subjectId}` : "&subject_id=is.null"), { method: "DELETE" });
@@ -476,7 +525,7 @@ async function loadAttRecent() {
   const box = document.getElementById("attRecent");
   const rows = await get("/attendance?select=*&order=created_at.desc&limit=30").catch(() => []);
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز ثبتی انجام نشده است.</p>'; return; }
-  const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
+  const STA = { present: "حاضر", absent: "غایب", late: "تأخیر", excused: "غیبت موجه" };
   box.innerHTML = `<table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>تاریخ</th><th>وضعیت</th><th>ثبت‌کننده</th><th>عملیات</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "—"}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-att="${r.id}">ویرایش</button><button class="btn small secondary" data-del-att="${r.id}">حذف</button></span></td></tr>`).join("")}
     </tbody></table>`;
@@ -503,7 +552,7 @@ async function loadAttRecent() {
 /* ---------- Students ---------- */
 async function viewStudents(m) {
   m.innerHTML = `
-    <div class="panel">
+    <div class="panel" data-deputy-hide>
       <h2>افزودن دانش‌آموز</h2>
       <form id="stuForm"><div class="form-grid">
         <div class="field"><label>نام</label><input id="stuFirst" required></div>
@@ -511,11 +560,13 @@ async function viewStudents(m) {
         <div class="field"><label>کلاس</label><select id="stuClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
         <div class="field"><label>نام ولی</label><input id="stuParent"></div>
         <div class="field"><label>تلفن ولی</label><input id="stuPhone"></div>
+        <div class="field"><label>نام پدر</label><input id="stuFather"></div>
+        <div class="field"><label>کد ملی</label><input id="stuNational"></div>
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form>
     </div>
-    <div class="panel">
+    <div class="panel" data-deputy-hide>
       <h2>ورود گروهی از اکسل / CSV</h2>
-      <p class="muted" style="margin-bottom:10px">ستون‌های فایل: نام | نام خانوادگی | نام کلاس | نام ولی | تلفن ولی — اگه کلاسی توی سامانه نباشه، خودکار ساخته می‌شه و ردیف‌های تکراری رد می‌شن.</p>
+      <p class="muted" style="margin-bottom:10px">ستون‌های فایل: نام | نام خانوادگی | نام کلاس | نام ولی | تلفن ولی | نام پدر | کد ملی — اگه کلاسی توی سامانه نباشه، خودکار ساخته می‌شه و ردیف‌های تکراری رد می‌شن.</p>
       <div class="row-actions">
         <div class="field"><label>فایل اکسل یا CSV</label><input type="file" id="stuFile" accept=".xlsx,.xls,.csv"></div>
         <button class="btn small secondary" id="stuTemplate" type="button">دانلود فایل نمونه</button>
@@ -524,18 +575,22 @@ async function viewStudents(m) {
     </div>
     <div class="panel"><h2>فهرست دانش‌آموزان (${cache.students.length})</h2>
       <table><thead><tr><th>نام و نام خانوادگی</th><th>کلاس</th><th>ولی</th><th>تلفن ولی</th><th>عملیات</th></tr></thead><tbody>
-      ${cache.students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td><td>${s.parent_name || "—"}</td><td>${s.parent_phone || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-student="${s.id}">ویرایش</button><button class="btn small secondary" data-del-student="${s.id}" data-name="${s.first_name} ${s.last_name}">حذف</button></span></td></tr>`).join("")}
-      </tbody></table></div>`;
+      ${cache.students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${className(s.class_id)}</td><td>${s.parent_name || "—"}</td><td>${s.parent_phone || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small secondary" data-profile-student="${s.id}">پرونده</button><button class="btn small" data-edit-student="${s.id}">ویرایش</button><button class="btn small secondary" data-del-student="${s.id}" data-name="${s.first_name} ${s.last_name}">حذف</button></span></td></tr>`).join("")}
+      </tbody></table></div>
+    ${session.role === "manager" ? transferPanelHtml() : ""}`;
+  wireTransfer(m);
+  deputyLock(m);
   document.getElementById("stuForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      await post("/students", { first_name: val("stuFirst"), last_name: val("stuLast"), class_id: val("stuClass"), parent_name: val("stuParent") || null, parent_phone: val("stuPhone") || null });
+      await post("/students", { first_name: val("stuFirst"), last_name: val("stuLast"), class_id: val("stuClass"), parent_name: val("stuParent") || null, parent_phone: val("stuPhone") || null, father_name: val("stuFather") || null, national_code: val("stuNational") || null, year_id: (cache.classes.find(c => c.id === val("stuClass")) || {}).year_id || null });
       toast("دانش‌آموز اضافه شد"); await refreshCache(); render();
     } catch { toast("خطا در افزودن"); }
   });
   wireFileImport("stuFile", "stuImportResult", importStudents);
   const stuTpl = document.getElementById("stuTemplate");
   if (stuTpl) stuTpl.addEventListener("click", () => downloadTemplate("students"));
+  m.querySelectorAll("[data-profile-student]").forEach(btn => btn.addEventListener("click", () => viewStudentProfile(btn.dataset.profileStudent)));
   m.querySelectorAll("[data-del-student]").forEach(btn => btn.addEventListener("click", async () => {
     if (!(await askConfirm("دانش‌آموز «" + btn.dataset.name + "» حذف شود؟ حضور و غیاب، پیامک‌ها و حساب‌های کاربری وابسته به او هم حذف می‌شوند."))) return;
     const id = btn.dataset.delStudent;
@@ -555,10 +610,12 @@ async function viewStudents(m) {
       eField("نام خانوادگی", eInput("edLast", s.last_name)) +
       eField("کلاس", `<select id="edClass">${cache.classes.map(c => `<option value="${c.id}"${c.id === s.class_id ? " selected" : ""}>${c.name}</option>`).join("")}</select>`) +
       eField("نام ولی", eInput("edParent", s.parent_name)) +
-      eField("تلفن ولی", eInput("edPhone", s.parent_phone, 'dir="ltr"')),
+      eField("تلفن ولی", eInput("edPhone", s.parent_phone, 'dir="ltr"')) +
+      eField("نام پدر", eInput("edFather", s.father_name)) +
+      eField("کد ملی", eInput("edNational", s.national_code, 'dir="ltr"')),
       async () => {
         try {
-          await api("/students?id=eq." + s.id, { method: "PATCH", body: JSON.stringify({ first_name: val("edFirst"), last_name: val("edLast"), class_id: val("edClass"), parent_name: val("edParent") || null, parent_phone: val("edPhone") || null }) });
+          await api("/students?id=eq." + s.id, { method: "PATCH", body: JSON.stringify({ first_name: val("edFirst"), last_name: val("edLast"), class_id: val("edClass"), parent_name: val("edParent") || null, parent_phone: val("edPhone") || null, father_name: val("edFather") || null, national_code: val("edNational") || null, year_id: (cache.classes.find(c => c.id === val("edClass")) || {}).year_id || null }) });
           toast("ذخیره شد"); await refreshCache(); render();
         } catch { toast("خطا در ذخیره"); return false; }
       });
@@ -567,22 +624,93 @@ async function viewStudents(m) {
 function val(id) { return document.getElementById(id).value.trim(); }
 
 /* ---------- Classes ---------- */
+/* ---------- Academic years ---------- */
+async function viewYears(m) {
+  m.innerHTML = `
+    <div class="panel"><h2>افزودن سال تحصیلی</h2>
+      <form id="yrForm"><div class="form-grid">
+        <div class="field"><label>نام سال تحصیلی (مثل ۱۴۰۵-۱۴۰۶)</label><input id="yrName" required></div>
+      </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>
+    <div class="panel"><h2>سال‌های تحصیلی</h2>
+      ${(cache.years || []).length ? `<table><thead><tr><th>سال تحصیلی</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>
+      ${(cache.years || []).map(y => `<tr><td>${y.name}</td><td>${y.is_current ? '<span class="badge present">سال جاری</span>' : "—"}</td><td><span style="display:inline-flex;gap:6px">${y.is_current ? "" : `<button class="btn small" data-current-year="${y.id}">سال جاری کن</button>`}<button class="btn small secondary" data-del-year="${y.id}" data-name="${y.name}">حذف</button></span></td></tr>`).join("")}
+      </tbody></table>` : '<p class="muted">هنوز سال تحصیلی تعریف نشده است.</p>'}</div>`;
+  document.getElementById("yrForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await post("/academic_years", { name: val("yrName"), is_current: (cache.years || []).length === 0 }); toast("سال تحصیلی اضافه شد"); await refreshCache(); render(); }
+    catch { toast("خطا در افزودن"); }
+  });
+  m.querySelectorAll("[data-current-year]").forEach(btn => btn.addEventListener("click", async () => {
+    try {
+      await api("/academic_years?is_current=eq.true&school_id=eq." + session.school_id, { method: "PATCH", body: JSON.stringify({ is_current: false }) });
+      await api("/academic_years?id=eq." + btn.dataset.currentYear, { method: "PATCH", body: JSON.stringify({ is_current: true }) });
+      toast("سال جاری عوض شد"); await refreshCache(); render();
+    } catch { toast("خطا"); }
+  }));
+  m.querySelectorAll("[data-del-year]").forEach(btn => btn.addEventListener("click", async () => {
+    if (cache.classes.some(c => c.year_id === btn.dataset.delYear)) { toast("برای این سال کلاس تعریف شده و حذف نمی‌شود"); return; }
+    if (!(await askConfirm("سال تحصیلی «" + btn.dataset.name + "» حذف شود؟"))) return;
+    try { await api("/academic_years?id=eq." + btn.dataset.delYear + "&school_id=eq." + session.school_id, { method: "DELETE" }); toast("حذف شد"); await refreshCache(); render(); }
+    catch { toast("خطا در حذف"); }
+  }));
+}
+
+function deputyLock(m) {
+  if (session.role !== "deputy") return;
+  m.querySelectorAll("[data-deputy-hide]").forEach(p => { p.style.display = "none"; });
+  m.querySelectorAll("[data-edit-class],[data-del-class],[data-edit-student],[data-del-student],[data-edit-subject],[data-del-subject]").forEach(b => b.remove());
+}
+
+function transferPanelHtml() {
+  const cur = currentYear();
+  if (!cur) return `<div class="panel"><h2>انتقال دانش‌آموز از سال تحصیلی قبل</h2><p class="muted">اول از صفحه «سال تحصیلی» یک سال را به‌عنوان سال جاری مشخص کنید.</p></div>`;
+  const targets = cache.classes.filter(c => c.year_id === cur.id);
+  const olds = cache.students.filter(s => { const c = cache.classes.find(x => x.id === s.class_id); return c && c.year_id && c.year_id !== cur.id; });
+  return `<div class="panel"><h2>انتقال دانش‌آموز از سال تحصیلی قبل</h2>
+    <p class="muted" style="margin-bottom:10px">دانش‌آموزان سال‌های قبل را انتخاب کنید و فقط کلاس جدیدشان را مشخص کنید؛ اطلاعاتشان بدون ورود مجدد کپی می‌شود.</p>
+    <div class="row-actions">
+      <div class="field"><label>کلاس مقصد (سال جاری)</label><select id="trTarget">${targets.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+      <button class="btn small secondary" id="trSelectAll" type="button">انتخاب همه</button>
+      <button class="btn small" id="trGo" type="button">انتقال انتخاب‌شده‌ها</button>
+    </div>
+    <div id="trList" style="margin-top:10px">${olds.length ? olds.map(s => `<label style="display:block;padding:4px 0"><input type="checkbox" class="trChk" value="${s.id}"> ${s.first_name} ${s.last_name} — ${className(s.class_id)}</label>`).join("") : '<p class="muted">دانش‌آموزی از سال‌های قبل پیدا نشد.</p>'}</div>
+  </div>`;
+}
+
+function wireTransfer(m) {
+  const go = document.getElementById("trGo");
+  if (!go) return;
+  document.getElementById("trSelectAll").addEventListener("click", () => m.querySelectorAll(".trChk").forEach(c => { c.checked = true; }));
+  go.addEventListener("click", async () => {
+    const target = document.getElementById("trTarget").value;
+    if (!target) { toast("برای سال جاری کلاسی تعریف نشده است"); return; }
+    const ids = [...m.querySelectorAll(".trChk:checked")].map(c => c.value);
+    if (!ids.length) { toast("دانش‌آموزی انتخاب نشده است"); return; }
+    const tcls = cache.classes.find(c => c.id === target);
+    const rows = cache.students.filter(s => ids.includes(s.id)).map(s => ({ first_name: s.first_name, last_name: s.last_name, class_id: target, parent_name: s.parent_name, parent_phone: s.parent_phone, father_name: s.father_name, national_code: s.national_code, year_id: tcls ? tcls.year_id : null, school_id: session.school_id }));
+    try { await post("/students", rows); toast(rows.length + " دانش‌آموز منتقل شد"); await refreshCache(); render(); }
+    catch { toast("خطا در انتقال"); }
+  });
+}
+
 async function viewClasses(m) {
   m.innerHTML = `
-    ${session.role === "manager" ? `<div class="panel"><h2>افزودن کلاس</h2>
+    ${can("classes") ? `<div class="panel"><h2>افزودن کلاس</h2>
       <form id="clsForm"><div class="form-grid">
         <div class="field"><label>نام کلاس</label><input id="clsName" required></div>
         <div class="field"><label>پایه</label><input id="clsGrade" required></div>
         <div class="field"><label>رشته</label><input id="clsField"></div>
+        <div class="field"><label>سال تحصیلی</label><select id="clsYear"><option value="">—</option>${(cache.years || []).map(y => `<option value="${y.id}"${y.is_current ? " selected" : ""}>${y.name}</option>`).join("")}</select></div>
       </div><button class="btn small" style="margin-top:10px">افزودن</button></form></div>` : ""}
     <div class="panel"><h2>کلاس‌ها</h2>
-      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>رشته</th><th>تعداد دانش‌آموز</th><th>عملیات</th></tr></thead><tbody>
-      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.field || "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-class="${c.id}">ویرایش</button><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></span></td></tr>`).join("")}
+      <table><thead><tr><th>نام کلاس</th><th>پایه</th><th>رشته</th><th>سال تحصیلی</th><th>تعداد دانش‌آموز</th><th>عملیات</th></tr></thead><tbody>
+      ${cache.classes.map(c => `<tr><td>${c.name}</td><td>${c.grade}</td><td>${c.field || "—"}</td><td>${c.year_id ? yearName(c.year_id) : "—"}</td><td>${cache.students.filter(s => s.class_id === c.id).length}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-class="${c.id}">ویرایش</button><button class="btn small secondary" data-del-class="${c.id}" data-name="${c.name}">حذف</button></span></td></tr>`).join("")}
       </tbody></table></div>`;
+  deputyLock(m);
   const f = document.getElementById("clsForm");
   if (f) f.addEventListener("submit", async (e) => {
     e.preventDefault();
-    try { await post("/classes", { name: val("clsName"), grade: val("clsGrade"), field: val("clsField") || null }); toast("کلاس اضافه شد"); await refreshCache(); render(); }
+    try { await post("/classes", { name: val("clsName"), grade: val("clsGrade"), field: val("clsField") || null, year_id: val("clsYear") || null }); toast("کلاس اضافه شد"); await refreshCache(); render(); }
     catch { toast("خطا در افزودن"); }
   });
   m.querySelectorAll("[data-del-class]").forEach(btn => btn.addEventListener("click", async () => {
@@ -602,24 +730,395 @@ async function viewClasses(m) {
     openEdit("ویرایش کلاس",
       eField("نام کلاس", eInput("edClsName", c.name)) +
       eField("پایه", eInput("edClsGrade", c.grade)) +
-      eField("رشته", eInput("edClsField", c.field)),
+      eField("رشته", eInput("edClsField", c.field)) +
+      eField("سال تحصیلی", `<select id="edClsYear"><option value="">—</option>${(cache.years || []).map(y => `<option value="${y.id}"${y.id === c.year_id ? " selected" : ""}>${y.name}</option>`).join("")}</select>`),
       async () => {
         try {
-          await api("/classes?id=eq." + c.id, { method: "PATCH", body: JSON.stringify({ name: val("edClsName"), grade: val("edClsGrade"), field: val("edClsField") || null }) });
+          await api("/classes?id=eq." + c.id, { method: "PATCH", body: JSON.stringify({ name: val("edClsName"), grade: val("edClsGrade"), field: val("edClsField") || null, year_id: val("edClsYear") || null }) });
           toast("ذخیره شد"); await refreshCache(); render();
         } catch { toast("خطا در ذخیره"); return false; }
       });
   }));
 }
 
+/* ---------- Reports + Karnameh export ---------- */
+async function viewReports(m) {
+  const tj = todayJalaali();
+  m.innerHTML = `
+    <div class="panel">
+      <h2>گزارش‌ها</h2>
+      <div class="row-actions">
+        <div class="field"><label>نوع گزارش</label><select id="rpType"><option value="attendance">حضور و غیاب</option><option value="grades">نمرات</option><option value="discipline">موارد انضباطی</option></select></div>
+        <div class="field"><label>کلاس</label><select id="rpClass"><option value="">همه کلاس‌ها</option>${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+        <div class="field"><label>دبیر</label><select id="rpTeacher"><option value="">همه دبیران</option>${cache.staff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join("")}</select></div>
+        <div class="field"><label>از تاریخ</label>${jalaliFields("rf", { jy: tj.jy, jm: 1, jd: 1 })}</div>
+        <div class="field"><label>تا تاریخ</label>${jalaliFields("rt", tj)}</div>
+        <button class="btn small" id="rpGo">نمایش گزارش</button>
+      </div>
+      <div id="rpBody"><p class="muted">فیلترها را تنظیم کنید و «نمایش گزارش» را بزنید.</p></div>
+    </div>
+    <div class="panel">
+      <h2>خروجی اکسل نمرات برای کارنامه‌ساز</h2>
+      <div class="row-actions">
+        <div class="field"><label>دبیر / هنرآموز</label><select id="kxTeacher">${cache.staff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join("")}</select></div>
+        <button class="btn small" id="kxGo">دانلود فایل اکسل نمرات</button>
+      </div>
+      <p class="muted" style="margin-top:8px">برای هر درس این دبیر یک شیت جدا ساخته می‌شود. ستون‌ها: ردیف، نام خانوادگی، نام، نام پدر، کد ملی، نام درس، نمره.</p>
+      <div id="kxMsg"></div>
+    </div>`;
+  document.getElementById("rpGo").addEventListener("click", runReport);
+  document.getElementById("kxGo").addEventListener("click", exportKarnameh);
+}
+
+async function runReport() {
+  const type = document.getElementById("rpType").value;
+  const classId = document.getElementById("rpClass").value;
+  const teacherId = document.getElementById("rpTeacher").value;
+  const from = readJalali("rf"), to = readJalali("rt");
+  const box = document.getElementById("rpBody");
+  if (!from || !to) { box.innerHTML = '<p class="muted">بازه تاریخ را درست وارد کنید.</p>'; return; }
+  box.innerHTML = '<p class="muted">در حال بارگذاری…</p>';
+  let subs = cache.subjects || [];
+  if (classId) subs = subs.filter(s => s.class_id === classId);
+  if (teacherId) subs = subs.filter(s => s.teacher_id === teacherId);
+  const subIds = new Set(subs.map(s => s.id));
+  const STA = { present: "حاضر", absent: "غایب", late: "تأخیر", excused: "غیبت موجه" };
+  try {
+    if (type === "attendance") {
+      let q = "/attendance?select=*&attendance_date=gte." + from + "&attendance_date=lte." + to + "&order=attendance_date.desc";
+      if (classId) q += "&class_id=eq." + classId;
+      const rows = await get(q);
+      const list = (rows || []).filter(r => r.subject_id ? subIds.has(r.subject_id) : !teacherId);
+      box.innerHTML = list.length ? `<p style="margin-bottom:8px">${list.length} رکورد پیدا شد.</p><table><thead><tr><th>تاریخ</th><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>وضعیت</th></tr></thead><tbody>
+        ${list.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "بدون درس"}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
+        </tbody></table>` : '<p class="muted">رکوردی پیدا نشد.</p>';
+    } else if (type === "grades") {
+      const rows = await get("/grades?select=*&created_at=gte." + from + "T00:00:00&created_at=lte." + to + "T23:59:59&order=created_at.desc");
+      const list = (rows || []).filter(r => subIds.has(r.subject_id) && (!classId || r.class_id === classId));
+      box.innerHTML = list.length ? `<p style="margin-bottom:8px">${list.length} نمره پیدا شد.</p><table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>دبیر</th><th>نمره</th></tr></thead><tbody>
+        ${list.map(r => { const sub = (cache.subjects || []).find(s => s.id === r.subject_id); return `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${sub ? sub.subject_name : "—"}</td><td>${sub && sub.teacher_id ? staffNameOf(sub.teacher_id) : "—"}</td><td>${r.score || "—"}</td></tr>`; }).join("")}
+        </tbody></table>` : '<p class="muted">نمره‌ای پیدا نشد.</p>';
+    } else {
+      let q = "/discipline_records?select=*&record_date=gte." + from + "&record_date=lte." + to + "&order=record_date.desc";
+      if (classId) q += "&class_id=eq." + classId;
+      const rows = await get(q);
+      const list = (rows || []).filter(r => r.subject_id ? subIds.has(r.subject_id) : !teacherId);
+      box.innerHTML = list.length ? `<p style="margin-bottom:8px">${list.length} مورد پیدا شد.</p><table><thead><tr><th>تاریخ</th><th>دانش‌آموز</th><th>کلاس</th><th>مورد</th><th>توضیحات</th><th>ثبت‌کننده</th></tr></thead><tbody>
+        ${list.map(r => `<tr><td>${faDate(r.record_date)}</td><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${r.type_title}</td><td>${r.description || "—"}</td><td>${r.recorded_by || "—"}</td></tr>`).join("")}
+        </tbody></table>` : '<p class="muted">موردی پیدا نشد.</p>';
+    }
+  } catch { box.innerHTML = '<p class="muted">خطا در گرفتن گزارش.</p>'; }
+}
+
+async function exportKarnameh() {
+  const tid = document.getElementById("kxTeacher").value;
+  const msg = document.getElementById("kxMsg");
+  if (!tid) { msg.innerHTML = '<p class="muted">دبیری انتخاب نشده است.</p>'; return; }
+  msg.innerHTML = '<p class="muted">در حال ساخت فایل…</p>';
+  try {
+    await loadXLSX();
+    const subs = (cache.subjects || []).filter(s => s.teacher_id === tid);
+    if (!subs.length) { msg.innerHTML = '<p class="muted">این دبیر درسی ندارد.</p>'; return; }
+    const grades = await get("/grades?select=*&subject_id=in.(" + subs.map(s => s.id).join(",") + ")").catch(() => []);
+    const gmap = {};
+    (grades || []).forEach(g => { gmap[g.student_id + "|" + g.subject_id] = g.score; });
+    const wb = XLSX.utils.book_new();
+    const used = new Set();
+    for (const sub of subs) {
+      const students = cache.students.filter(st => st.class_id === sub.class_id);
+      if (!students.length) continue;
+      const aoa = [["ردیف", "نام خانوادگی", "نام", "نام پدر", "کد ملی", "نام درس", "نمره"]];
+      students.forEach((st, i) => aoa.push([i + 1, st.last_name, st.first_name, st.father_name || "", st.national_code || "", sub.subject_name, (gmap[st.id + "|" + sub.id] != null ? gmap[st.id + "|" + sub.id] : "")]));
+      let name = (sub.subject_name + " " + className(sub.class_id)).replace(/[\\/?*\[\]:]/g, " ").trim().slice(0, 31) || "درس";
+      let base = name, n = 2;
+      while (used.has(name)) { name = base.slice(0, 28) + " " + (n++); }
+      used.add(name);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+    }
+    if (!wb.SheetNames.length) { msg.innerHTML = '<p class="muted">برای این دبیر کلاسی با دانش‌آموز پیدا نشد.</p>'; return; }
+    XLSX.writeFile(wb, "karnameh-" + staffNameOf(tid) + ".xlsx");
+    msg.innerHTML = '<p>فایل ساخته و دانلود شد (' + wb.SheetNames.length + ' شیت).</p>';
+  } catch { msg.innerHTML = '<p style="color:#dc2626">ساخت فایل ممکن نشد.</p>'; }
+}
+
+/* ---------- Backup / Restore ---------- */
+const BACKUP_TABLES = ["academic_years", "classes", "staff", "students", "class_subjects", "attendance", "grades", "discipline_types", "discipline_records", "announcements", "homework", "sms_log"];
+async function viewBackup(m) {
+  m.innerHTML = `
+    <div class="panel">
+      <h2>پشتیبان‌گیری</h2>
+      <p class="muted" style="margin-bottom:10px">از همه اطلاعات مدرسه (سال‌های تحصیلی، کلاس‌ها، پرسنل، دانش‌آموزان، دروس، حضور و غیاب، نمرات، موارد انضباطی، اطلاعیه‌ها، تکالیف و لاگ پیامک) یک فایل پشتیبان دانلود می‌شود. حساب‌های کاربری و رمزها داخل پشتیبان نیستند.</p>
+      <button class="btn" id="bkGo">دانلود فایل پشتیبان</button>
+      <div id="bkMsg" style="margin-top:10px"></div>
+    </div>
+    <div class="panel">
+      <h2>بازیابی پشتیبان</h2>
+      <p class="muted" style="margin-bottom:10px">فایل پشتیبان را انتخاب کنید؛ اطلاعاتش به‌صورت رکوردهای تازه به همین مدرسه اضافه می‌شود و اطلاعات فعلی پاک نمی‌شود.</p>
+      <div class="row-actions">
+        <div class="field"><label>فایل پشتیبان (JSON)</label><input type="file" id="rsFile" accept=".json"></div>
+        <button class="btn secondary" id="rsGo">بازیابی</button>
+      </div>
+      <div id="rsMsg" style="margin-top:10px"></div>
+    </div>`;
+  document.getElementById("bkGo").addEventListener("click", async () => {
+    const msg = document.getElementById("bkMsg");
+    msg.innerHTML = '<p class="muted">در حال آماده‌سازی…</p>';
+    try {
+      const data = { app: "NazmYar", version: 3, school_id: session.school_id, school_name: session.school_name || "", exported_at: new Date().toISOString(), tables: {} };
+      for (const t of BACKUP_TABLES) data.tables[t] = await get("/" + t + "?select=*").catch(() => []);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
+      a.download = "nazmyar-backup-" + todayISO() + ".json";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+      msg.innerHTML = '<p>فایل پشتیبان دانلود شد.</p>';
+    } catch { msg.innerHTML = '<p style="color:#dc2626">پشتیبان‌گیری ممکن نشد.</p>'; }
+  });
+  document.getElementById("rsGo").addEventListener("click", async () => {
+    const f = document.getElementById("rsFile").files[0];
+    const msg = document.getElementById("rsMsg");
+    if (!f) { msg.innerHTML = '<p class="muted">اول فایل را انتخاب کنید.</p>'; return; }
+    if (!(await askConfirm("بازیابی شروع شود؟ رکوردهای فایل به‌صورت تازه اضافه می‌شوند."))) return;
+    msg.innerHTML = '<p class="muted">در حال بازیابی… چند لحظه صبر کنید.</p>';
+    try {
+      const data = JSON.parse(await f.text());
+      if (!data || !data.tables) throw new Error("bad");
+      const T = data.tables;
+      const strip = (r) => { const c = { ...r }; delete c.id; c.school_id = session.school_id; return c; };
+      const yearMap = {}, classMap = {}, staffMap = {}, stuMap = {}, subMap = {};
+      for (const r of T.academic_years || []) { const c = await post("/academic_years", strip(r)).catch(() => null); if (c && c[0]) yearMap[r.id] = c[0].id; }
+      for (const r of T.classes || []) { const b = strip(r); b.year_id = yearMap[r.year_id] || null; const c = await post("/classes", b).catch(() => null); if (c && c[0]) classMap[r.id] = c[0].id; }
+      for (const r of T.staff || []) { const c = await post("/staff", strip(r)).catch(() => null); if (c && c[0]) staffMap[r.id] = c[0].id; }
+      for (const r of T.students || []) { const b = strip(r); b.class_id = classMap[r.class_id] || null; b.year_id = yearMap[r.year_id] || null; const c = await post("/students", b).catch(() => null); if (c && c[0]) stuMap[r.id] = c[0].id; }
+      for (const r of T.class_subjects || []) { const b = strip(r); b.class_id = classMap[r.class_id] || null; b.teacher_id = staffMap[r.teacher_id] || null; const c = await post("/class_subjects", b).catch(() => null); if (c && c[0]) subMap[r.id] = c[0].id; }
+      const bulk = async (table, rows, fix) => {
+        const clean = [];
+        for (const r of rows || []) { const b = strip(r); if (fix(b, r) === false) continue; clean.push(b); }
+        for (let i = 0; i < clean.length; i += 200) await post("/" + table, clean.slice(i, i + 200)).catch(() => null);
+        return clean.length;
+      };
+      let total = 0;
+      total += await bulk("discipline_types", T.discipline_types, () => true);
+      total += await bulk("attendance", T.attendance, (b, r) => { if (!stuMap[r.student_id]) return false; b.student_id = stuMap[r.student_id]; b.class_id = classMap[r.class_id] || null; b.subject_id = r.subject_id ? (subMap[r.subject_id] || null) : null; });
+      total += await bulk("grades", T.grades, (b, r) => { if (!stuMap[r.student_id] || !subMap[r.subject_id]) return false; b.student_id = stuMap[r.student_id]; b.subject_id = subMap[r.subject_id]; b.class_id = classMap[r.class_id] || null; });
+      total += await bulk("discipline_records", T.discipline_records, (b, r) => { if (!stuMap[r.student_id]) return false; b.student_id = stuMap[r.student_id]; b.class_id = classMap[r.class_id] || null; b.subject_id = r.subject_id ? (subMap[r.subject_id] || null) : null; });
+      total += await bulk("announcements", T.announcements, () => true);
+      total += await bulk("homework", T.homework, (b, r) => { b.class_id = classMap[r.class_id] || null; });
+      total += await bulk("sms_log", T.sms_log, (b, r) => { b.student_id = stuMap[r.student_id] || null; });
+      await refreshCache();
+      msg.innerHTML = '<p>بازیابی تمام شد؛ ' + total + ' رکورد وابسته هم اضافه شد. فهرست‌ها را از صفحه‌های مربوطه ببینید.</p>';
+    } catch { msg.innerHTML = '<p style="color:#dc2626">بازیابی ممکن نشد؛ فایل پشتیبان معتبر نیست.</p>'; }
+  });
+}
+
+/* ---------- Delegation ---------- */
+const PERM_TABS = [["students", "دانش‌آموزان"], ["classes", "کلاس‌ها"], ["subjects", "دروس کلاس‌ها"], ["staff", "پرسنل"], ["years", "سال تحصیلی"], ["grades", "نمرات"], ["discipline", "کاربرگ انضباطی"], ["reports", "گزارش‌ها"], ["sms", "پنل پیامک"], ["announcements", "اطلاعیه‌ها"], ["homework", "تکالیف"], ["backup", "پشتیبان‌گیری"]];
+function delegationPanelHtml(profiles) {
+  const people = (profiles || []).filter(p => p.role === "teacher" || p.role === "deputy");
+  return `<h2>تفویض اختیار مدیر</h2>
+    <p class="muted" style="margin-bottom:10px">یک همکار را انتخاب کنید و دسترسی‌هایی را که می‌خواهید به او بدهید تیک بزنید و «ثبت» را بزنید؛ برداشتن تیک‌ها و ثبت دوباره، دسترسی را لغو می‌کند. تغییر از ورود بعدی همکار دیده می‌شود.</p>
+    ${people.length ? `<div class="row-actions">
+      <div class="field"><label>همکار</label><select id="dgProfile">${people.map(p => `<option value="${p.id}">${p.full_name} — ${ROLE_FA[p.role] || p.role} (${p.username})</option>`).join("")}</select></div>
+    </div>
+    <div id="dgPerms" style="margin:12px 0"></div>
+    <button class="btn small" id="dgSave" type="button">ثبت دسترسی‌ها</button>
+    <div id="dgMsg" style="margin-top:8px"></div>` : '<p class="muted">هنوز حساب همکاری (معلم یا معاون) ساخته نشده است.</p>'}`;
+}
+function wireDelegation(dg, profiles) {
+  const sel = dg.querySelector("#dgProfile");
+  if (!sel) return;
+  const drawPerms = async () => {
+    const rows = await get("/delegations?select=permission&profile_id=eq." + sel.value).catch(() => []);
+    const have = new Set((rows || []).map(r => r.permission));
+    dg.querySelector("#dgPerms").innerHTML = PERM_TABS.map(([id, label]) => `<label style="display:inline-block;margin:4px 10px 4px 0"><input type="checkbox" class="dgPerm" value="${id}"${have.has(id) ? " checked" : ""}> ${label}</label>`).join("");
+  };
+  sel.addEventListener("change", drawPerms);
+  drawPerms();
+  dg.querySelector("#dgSave").addEventListener("click", async () => {
+    const chosen = [...dg.querySelectorAll(".dgPerm:checked")].map(c => c.value);
+    try {
+      await api("/delegations?profile_id=eq." + sel.value, { method: "DELETE" });
+      if (chosen.length) await post("/delegations", chosen.map(p => ({ profile_id: sel.value, permission: p, school_id: session.school_id })));
+      dg.querySelector("#dgMsg").innerHTML = '<p>دسترسی‌ها ثبت شد.</p>';
+    } catch { dg.querySelector("#dgMsg").innerHTML = '<p style="color:#dc2626">ثبت ممکن نشد.</p>'; }
+  });
+}
+
+/* ---------- Grades ---------- */
+async function viewGrades(m) {
+  m.innerHTML = `
+    <div class="panel">
+      <h2>نمرات</h2>
+      <div class="row-actions">
+        <div class="field"><label>کلاس</label><select id="grClass">${myClasses().map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+        <div class="field"><label>درس</label><select id="grSubject"></select></div>
+        <button class="btn small" id="grLoad">نمایش</button>
+      </div>
+      <div id="grBody"><p class="muted">کلاس و درس را انتخاب کنید و «نمایش» را بزنید.</p></div>
+    </div>`;
+  const fill = () => {
+    const cid = document.getElementById("grClass").value;
+    const mine = mySubjectIds();
+    document.getElementById("grSubject").innerHTML = (cache.subjects || []).filter(s => s.class_id === cid && (!mine || s.teacher_id === session.staff_id)).map(s => `<option value="${s.id}">${s.subject_name}${s.teacher_id ? " — " + staffNameOf(s.teacher_id) : ""}</option>`).join("");
+  };
+  document.getElementById("grClass").addEventListener("change", fill);
+  fill();
+  document.getElementById("grLoad").addEventListener("click", loadGrades);
+}
+
+async function loadGrades() {
+  const classId = document.getElementById("grClass").value;
+  const subjectId = document.getElementById("grSubject").value;
+  const body = document.getElementById("grBody");
+  if (!subjectId) { body.innerHTML = '<p class="muted">برای این کلاس درسی ثبت نشده است.</p>'; return; }
+  body.innerHTML = '<p class="muted">در حال بارگذاری…</p>';
+  const students = cache.students.filter(s => s.class_id === classId);
+  const rows = await get("/grades?select=*&subject_id=eq." + subjectId).catch(() => []);
+  const gmap = {};
+  (rows || []).forEach(r => { gmap[r.student_id] = r; });
+  const subj = (cache.subjects || []).find(s => s.id === subjectId);
+  const canEdit = session.role === "manager" || (session.role === "teacher" && (!session.staff_id || !subj || !subj.teacher_id || subj.teacher_id === session.staff_id));
+  body.innerHTML = students.length ? `<table><thead><tr><th>دانش‌آموز</th><th>نمره</th></tr></thead><tbody>
+    ${students.map(s => `<tr><td>${s.first_name} ${s.last_name}</td><td>${canEdit ? `<input class="grScore" data-student="${s.id}" value="${gmap[s.id] ? (gmap[s.id].score || "") : ""}" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px;width:110px">` : (gmap[s.id] && gmap[s.id].score ? gmap[s.id].score : "—")}</td></tr>`).join("")}
+    </tbody></table>
+    ${canEdit ? '<button class="btn" id="grSave" style="margin-top:14px">ثبت نمرات</button>' : '<p class="muted" style="margin-top:10px">فقط مشاهده — ثبت و ویرایش نمره با دبیر همین درس و مدیر است.</p>'}` : '<p class="muted">این کلاس دانش‌آموزی ندارد.</p>';
+  const sv = document.getElementById("grSave");
+  if (sv) sv.addEventListener("click", async () => {
+    const ups = [], dels = [];
+    body.querySelectorAll(".grScore").forEach(inp => {
+      const v = inp.value.trim();
+      if (v) ups.push({ student_id: inp.dataset.student, subject_id: subjectId, class_id: classId, score: v, recorded_by: session.username, school_id: session.school_id, updated_at: new Date().toISOString() });
+      else if (gmap[inp.dataset.student]) dels.push(inp.dataset.student);
+    });
+    try {
+      if (ups.length) await upsert("/grades", ups);
+      for (const sid of dels) await api("/grades?subject_id=eq." + subjectId + "&student_id=eq." + sid, { method: "DELETE" });
+      toast("نمرات ثبت شد"); loadGrades();
+    } catch { toast("خطا در ثبت نمرات"); }
+  });
+}
+
+/* ---------- Discipline ---------- */
+async function viewDiscipline(m) {
+  const isMgr = can("discipline");
+  const tj = todayJalaali();
+  m.innerHTML = `
+    <div class="panel">
+      <h2>کاربرگ انضباطی</h2>
+      <div class="row-actions">
+        <div class="field"><label>کلاس</label><select id="dcClass">${myClasses().map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+        <button class="btn small" id="dcLoad">نمایش</button>
+      </div>
+      <div id="dcBody"><p class="muted">در حال بارگذاری…</p></div>
+    </div>
+    <div class="panel">
+      <h2>ثبت مورد انضباطی</h2>
+      <div class="form-grid">
+        <div class="field"><label>دانش‌آموز</label><select id="dcStudent"></select></div>
+        <div class="field"><label>مورد</label><select id="dcType">${(cache.discTypes || []).map(t => `<option value="${t.title}">${t.title}</option>`).join("")}</select></div>
+        <div class="field"><label>تاریخ (شمسی)</label>${jalaliFields("dc", tj)}</div>
+        <div class="field"><label>توضیحات</label><input id="dcDesc"></div>
+      </div>
+      <button class="btn small" id="dcAdd" style="margin-top:10px">ثبت مورد</button>
+      ${(cache.discTypes || []).length ? "" : '<p class="muted" style="margin-top:8px">هنوز موردی در لیست کشویی تعریف نشده است؛ مدیر از بخش زیر مورد اضافه کند.</p>'}
+    </div>
+    ${isMgr ? `<div class="panel"><h2>مدیریت موارد لیست کشویی</h2>
+      <div class="row-actions">
+        <div class="field"><label>مورد جدید</label><input id="dtName"></div>
+        <button class="btn small" id="dtAdd">افزودن مورد</button>
+      </div>
+      <div id="dtList" style="margin-top:10px">${(cache.discTypes || []).length ? (cache.discTypes || []).map(t => `<span style="display:inline-flex;gap:6px;align-items:center;margin:4px"><span class="badge role">${t.title}</span><button class="btn small secondary" data-del-type="${t.id}" data-name="${t.title}">حذف</button></span>`).join("") : '<p class="muted">موردی تعریف نشده است.</p>'}</div>
+    </div>` : ""}`;
+  const fillStudents = () => {
+    const cid = document.getElementById("dcClass").value;
+    document.getElementById("dcStudent").innerHTML = cache.students.filter(s => s.class_id === cid).map(s => `<option value="${s.id}">${s.first_name} ${s.last_name}</option>`).join("");
+  };
+  document.getElementById("dcClass").addEventListener("change", () => { fillStudents(); loadDisc(); });
+  fillStudents();
+  document.getElementById("dcLoad").addEventListener("click", loadDisc);
+  loadDisc();
+  document.getElementById("dcAdd").addEventListener("click", async () => {
+    const cid = document.getElementById("dcClass").value;
+    const sid = document.getElementById("dcStudent").value;
+    const type = document.getElementById("dcType").value;
+    const date = readJalali("dc");
+    if (!sid || !type) { toast("دانش‌آموز و مورد را انتخاب کنید"); return; }
+    if (!date) { toast("تاریخ شمسی را درست وارد کنید"); return; }
+    try {
+      await post("/discipline_records", { class_id: cid, student_id: sid, record_date: date, type_title: type, description: val("dcDesc") || null, recorded_by: session.username });
+      toast("مورد انضباطی ثبت شد"); document.getElementById("dcDesc").value = ""; loadDisc();
+    } catch { toast("خطا در ثبت"); }
+  });
+  const dtAdd = document.getElementById("dtAdd");
+  if (dtAdd) dtAdd.addEventListener("click", async () => {
+    const name = val("dtName").trim();
+    if (!name) { toast("نام مورد را بنویسید"); return; }
+    try { await post("/discipline_types", { title: name }); toast("مورد اضافه شد"); await refreshCache(); render(); }
+    catch { toast("خطا در افزودن"); }
+  });
+  m.querySelectorAll("[data-del-type]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!(await askConfirm("مورد «" + btn.dataset.name + "» از لیست حذف شود؟ رکوردهای قبلی با همین نام سر جایشان می‌مانند."))) return;
+    try { await api("/discipline_types?id=eq." + btn.dataset.delType, { method: "DELETE" }); toast("حذف شد"); await refreshCache(); render(); }
+    catch { toast("خطا در حذف"); }
+  }));
+}
+
+async function loadDisc() {
+  const cid = document.getElementById("dcClass").value;
+  const box = document.getElementById("dcBody");
+  if (!cid) { box.innerHTML = '<p class="muted">کلاسی وجود ندارد.</p>'; return; }
+  box.innerHTML = '<p class="muted">در حال بارگذاری…</p>';
+  const rows = await get("/discipline_records?select=*&class_id=eq." + cid + "&order=record_date.desc").catch(() => []);
+  box.innerHTML = (rows && rows.length) ? `<table><thead><tr><th>تاریخ</th><th>دانش‌آموز</th><th>مورد</th><th>توضیحات</th><th>ثبت‌کننده</th><th>عملیات</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${faDate(r.record_date)}</td><td>${studentName(r.student_id)}</td><td>${r.type_title}</td><td>${r.description || "—"}</td><td>${r.recorded_by || "—"}</td><td>${(session.role === "manager" || r.recorded_by === session.username) ? `<button class="btn small secondary" data-del-disc="${r.id}">حذف</button>` : ""}</td></tr>`).join("")}
+    </tbody></table>` : '<p class="muted">برای این کلاس مورد انضباطی ثبت نشده است.</p>';
+  box.querySelectorAll("[data-del-disc]").forEach(btn => btn.addEventListener("click", async () => {
+    if (!(await askConfirm("این مورد انضباطی حذف شود؟"))) return;
+    try { await api("/discipline_records?id=eq." + btn.dataset.delDisc, { method: "DELETE" }); toast("حذف شد"); loadDisc(); }
+    catch { toast("خطا در حذف"); }
+  }));
+}
+
+/* ---------- Student profile ---------- */
+async function viewStudentProfile(studentId) {
+  const m = document.getElementById("main");
+  const s = cache.students.find(x => x.id === studentId);
+  if (!s) return;
+  m.innerHTML = '<div class="panel">در حال بارگذاری…</div>';
+  const att = await get("/attendance?select=*&student_id=eq." + studentId + "&order=attendance_date.desc").catch(() => []);
+  const disc = await get("/discipline_records?select=*&student_id=eq." + studentId + "&order=record_date.desc").catch(() => []);
+  const STA = { present: "حاضر", absent: "غایب", late: "تأخیر", excused: "غیبت موجه" };
+  const nonPresent = (att || []).filter(r => r.status !== "present");
+  m.innerHTML = `
+    <div class="panel">
+      <h2>پرونده دانش‌آموز — ${s.first_name} ${s.last_name}</h2>
+      <p>کلاس: <b>${className(s.class_id)}</b> &nbsp;|&nbsp; نام پدر: <b>${s.father_name || "—"}</b> &nbsp;|&nbsp; کد ملی: <b>${s.national_code || "—"}</b></p>
+      <p style="margin-top:6px">ولی: <b>${s.parent_name || "—"}</b> &nbsp;|&nbsp; تلفن ولی: <b>${s.parent_phone || "—"}</b></p>
+      <p style="margin-top:6px">غیبت: <b>${(att || []).filter(r => r.status === "absent").length}</b> &nbsp;|&nbsp; غیبت موجه: <b>${(att || []).filter(r => r.status === "excused").length}</b> &nbsp;|&nbsp; تأخیر: <b>${(att || []).filter(r => r.status === "late").length}</b> &nbsp;|&nbsp; موارد انضباطی: <b>${(disc || []).length}</b></p>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn small" onclick="window.print()">چاپ پرونده</button>
+        <button class="btn small secondary" id="profBack">بازگشت به فهرست دانش‌آموزان</button>
+      </div>
+    </div>
+    <div class="panel"><h2>غیبت‌ها و تأخیرها</h2>
+      ${nonPresent.length ? `<table><thead><tr><th>تاریخ</th><th>درس</th><th>وضعیت</th></tr></thead><tbody>
+      ${nonPresent.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "بدون درس (کل روز)"}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
+      </tbody></table>` : '<p class="muted">غیبت یا تأخیری ثبت نشده است.</p>'}</div>
+    <div class="panel"><h2>موارد انضباطی</h2>
+      ${(disc || []).length ? `<table><thead><tr><th>تاریخ</th><th>مورد</th><th>توضیحات</th><th>ثبت‌کننده</th></tr></thead><tbody>
+      ${(disc || []).map(r => `<tr><td>${faDate(r.record_date)}</td><td>${r.type_title}</td><td>${r.description || "—"}</td><td>${r.recorded_by || "—"}</td></tr>`).join("")}
+      </tbody></table>` : '<p class="muted">مورد انضباطی ثبت نشده است.</p>'}</div>`;
+  document.getElementById("profBack").addEventListener("click", () => { currentTab = "students"; render(); });
+}
+
 /* ---------- Class subjects ---------- */
 async function viewSubjects(m) {
-  const isMgr = session.role === "manager";
+  const isMgr = can("subjects");
   m.innerHTML = `
     <div class="panel">
       <h2>دروس کلاس‌ها</h2>
       <div class="row-actions">
-        <div class="field"><label>کلاس</label><select id="subClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
+        <div class="field"><label>کلاس</label><select id="subClass">${myClasses().map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
       </div>
       <div id="subBody"></div>
     </div>
@@ -628,12 +1127,14 @@ async function viewSubjects(m) {
         <div class="field"><label>نام درس</label><input id="subName" required></div>
         <div class="field"><label>دبیر</label><select id="subTeacher"><option value="">— بدون دبیر —</option>${cache.staff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join("")}</select></div>
       </div><button class="btn small" style="margin-top:10px">افزودن درس</button></form></div>` : ""}`;
+  deputyLock(m);
   const body = document.getElementById("subBody");
   const draw = () => {
     const sel = document.getElementById("subClass");
     if (!sel) return;
     const cid = sel.value;
-    const list = (cache.subjects || []).filter(s => s.class_id === cid);
+    const mine = mySubjectIds();
+    const list = (cache.subjects || []).filter(s => s.class_id === cid && (!mine || s.teacher_id === session.staff_id));
     body.innerHTML = list.length ? `<table><thead><tr><th>درس</th><th>دبیر</th>${isMgr ? "<th>عملیات</th>" : ""}</tr></thead><tbody>
       ${list.map(s => `<tr><td>${s.subject_name}</td><td>${s.teacher_id ? staffNameOf(s.teacher_id) : "—"}</td>${isMgr ? `<td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-subject="${s.id}">ویرایش</button><button class="btn small secondary" data-del-subject="${s.id}" data-name="${s.subject_name}">حذف</button></span></td>` : ""}</tr>`).join("")}
       </tbody></table>` : '<p class="muted">برای این کلاس هنوز درسی ثبت نشده است.</p>';
@@ -855,7 +1356,7 @@ async function viewHomework(m) {
 /* ---------- Bulk import (Excel / CSV) ---------- */
 function downloadTemplate(kind) {
   const rows = kind === "students"
-    ? [["نام", "نام خانوادگی", "نام کلاس", "نام ولی", "تلفن ولی"], ["علی", "احمدی", "هفتم الف", "پدر علی احمدی", "09123456789"]]
+    ? [["نام", "نام خانوادگی", "نام کلاس", "نام ولی", "تلفن ولی", "نام پدر", "کد ملی"], ["علی", "احمدی", "هفتم الف", "پدر علی احمدی", "09123456789", "رضا", "0012345678"]]
     : [["نام و نام خانوادگی", "سمت", "شماره پرسنلی"], ["خانم محمدی", "معلم ریاضی", "1024"]];
   const csv = "\uFEFF" + rows.map(r => r.join(",")).join("\r\n");
   const a = document.createElement("a");
@@ -963,7 +1464,7 @@ async function importStudents(rows) {
     const key = first + "|" + last + "|" + cls.id;
     if (existing.has(key)) { skipped++; continue; }
     existing.add(key);
-    toInsert.push({ first_name: first, last_name: last, class_id: cls.id, parent_name: pick(r, ["نام ولی", "ولی", "parent_name"]) || null, parent_phone: fixPhone(pick(r, ["تلفن ولی", "تلفن", "parent_phone"])) || null, school_id: session.school_id });
+    toInsert.push({ first_name: first, last_name: last, class_id: cls.id, parent_name: pick(r, ["نام ولی", "ولی", "parent_name"]) || null, parent_phone: fixPhone(pick(r, ["تلفن ولی", "تلفن", "parent_phone"])) || null, father_name: pick(r, ["نام پدر", "پدر", "father_name"]) || null, national_code: normDigits(pick(r, ["کد ملی", "کدملی", "national_code"])) || null, year_id: cls.year_id || null, school_id: session.school_id });
   }
   if (toInsert.length) {
     try { await post("/students", toInsert); added = toInsert.length; }
@@ -1019,7 +1520,7 @@ async function viewMyAttendance(m) {
   if (!session.student_id) { m.innerHTML = '<div class="panel"><p class="muted">این حساب به دانش‌آموزی وصل نیست.</p></div>'; return; }
   const stu = cache.students.find(s => s.id === session.student_id);
   const rows = await get("/attendance?select=*&student_id=eq." + session.student_id + "&order=attendance_date.desc").catch(() => []);
-  const STA = { present: "حاضر", absent: "غایب", late: "تأخیر" };
+  const STA = { present: "حاضر", absent: "غایب", late: "تأخیر", excused: "غیبت موجه" };
   m.innerHTML = `
     <div class="panel"><h2>حضور و غیاب ${stu ? stu.first_name + " " + stu.last_name : ""} — ${stu ? className(stu.class_id) : ""}</h2>
     ${(rows && rows.length) ? `<table><thead><tr><th>تاریخ</th><th>درس</th><th>وضعیت</th></tr></thead><tbody>
@@ -1056,12 +1557,13 @@ async function viewAccounts(m) {
 
     <div class="panel"><h2>ساخت حساب برای معلم‌ها / پرسنل</h2>
       <div class="field" style="max-width:220px"><label>رمز حساب‌های جدید</label><input id="accPassTeacher" value="1234"></div>
-      <table><thead><tr><th>نام</th><th>سمت</th><th>نام کاربری</th><th></th></tr></thead><tbody>
+      <table><thead><tr><th>نام</th><th>سمت</th><th>نام کاربری</th><th>نقش</th><th></th></tr></thead><tbody>
       ${cache.staff.length === 0 ? `<tr><td colspan="4" class="muted">هنوز دبیری ثبت نشده است. اول از تب «پرسنل» دبیر را اضافه کنید (یا با فایل اکسل وارد کنید)؛ بعد اینجا در همین فهرست ظاهر می‌شود و برایش حساب می‌سازید.</td></tr>` : ""}
       ${cache.staff.map((s, i) => byStaff[s.id]
         ? `<tr><td>${s.full_name}</td><td>${s.job_title}</td><td colspan="2"><span class="badge role">حساب دارد: ${byStaff[s.id].username}</span></td></tr>`
         : `<tr><td>${s.full_name}</td><td>${s.job_title}</td>
            <td><input id="u-staff-${s.id}" value="t${s.personnel_code ? String(s.personnel_code).replace(/\D/g, "") : (101 + i)}" dir="ltr" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px"></td>
+           <td><select id="role-staff-${s.id}" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px"><option value="teacher">معلم</option><option value="deputy">معاون آموزشی</option></select></td>
            <td><button class="btn small" data-create="teacher" data-id="${s.id}">ساخت حساب</button></td></tr>`).join("")}
       </tbody></table></div>
 
@@ -1084,7 +1586,7 @@ async function viewAccounts(m) {
     let body = null;
     if (kind === "teacher") {
       const s = cache.staff.find(x => x.id === id);
-      body = { p_username: val("u-staff-" + id), p_password: val("accPassTeacher") || "1234", p_full_name: s.full_name, p_role: "teacher", p_staff_id: id, p_student_id: null, p_school_id: session.school_id };
+      body = { p_username: val("u-staff-" + id), p_password: val("accPassTeacher") || "1234", p_full_name: s.full_name, p_role: val("role-staff-" + id) || "teacher", p_staff_id: id, p_student_id: null, p_school_id: session.school_id };
     } else if (kind === "student") {
       const s = cache.students.find(x => x.id === id);
       body = { p_username: val("u-stu-" + id), p_password: val("accPassFam") || "1234", p_full_name: s.first_name + " " + s.last_name, p_role: "student", p_staff_id: null, p_student_id: id, p_school_id: session.school_id };
@@ -1108,6 +1610,11 @@ async function viewAccounts(m) {
     try { await api("/profiles?id=eq." + btn.dataset.del, { method: "DELETE" }); toast("حساب حذف شد"); render(); }
     catch { toast("خطا در حذف"); }
   }));
+  const dg = document.createElement("div");
+  dg.className = "panel";
+  dg.innerHTML = delegationPanelHtml(profiles);
+  m.appendChild(dg);
+  wireDelegation(dg, profiles);
 }
 
 /* ---------- Init ---------- */
