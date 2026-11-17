@@ -307,22 +307,21 @@ document.getElementById("logoutBtn").addEventListener("click", () => {
 
 const ROLE_FA = { manager: "مدیر", teacher: "معلم", deputy: "معاون آموزشی", parent: "ولی", student: "دانش‌آموز" };
 const TABS = [
-  { id: "dashboard", label: "داشبورد", roles: ["manager", "teacher", "deputy", "parent", "student"] },
+  { id: "dashboard", label: "داشبورد", roles: ["manager", "deputy", "parent", "student"] },
   { id: "attendance", label: "حضور و غیاب", roles: ["manager", "teacher", "deputy"] },
   { id: "myattendance", label: "حضور و غیاب", roles: ["parent", "student"] },
-  { id: "students", label: "دانش‌آموزان", roles: ["manager", "teacher", "deputy"] },
-  { id: "classes", label: "کلاس‌ها", roles: ["manager", "teacher", "deputy"] },
-  { id: "subjects", label: "دروس کلاس‌ها", roles: ["manager", "teacher", "deputy"] },
+  { id: "students", label: "دانش‌آموزان", roles: ["manager", "deputy"] },
+  { id: "classes", label: "کلاس‌ها", roles: ["manager", "deputy"] },
+  { id: "subjects", label: "دروس کلاس‌ها", roles: ["manager", "deputy"] },
   { id: "years", label: "سال تحصیلی", roles: ["manager"] },
   { id: "grades", label: "نمرات", roles: ["manager", "teacher", "deputy"] },
-  { id: "discipline", label: "کاربرگ انضباطی", roles: ["manager", "teacher", "deputy"] },
+  { id: "discipline", label: "کاربرگ انضباطی", roles: ["manager", "deputy"] },
   { id: "reports", label: "گزارش‌ها", roles: ["manager", "deputy"] },
   { id: "backup", label: "پشتیبان‌گیری", roles: ["manager"] },
   { id: "staff", label: "پرسنل", roles: ["manager"] },
   { id: "accounts", label: "حساب‌های کاربری", roles: ["manager"] },
-  { id: "sms", label: "پنل پیامک", roles: ["manager", "teacher", "parent"] },
-  { id: "announcements", label: "اطلاعیه‌ها", roles: ["manager", "teacher", "parent", "student"] },
-  { id: "homework", label: "تکالیف", roles: ["manager", "teacher", "parent", "student"] },
+  { id: "sms", label: "پنل پیامک", roles: ["manager", "parent"] },
+  { id: "announcements", label: "اطلاعیه‌ها", roles: ["manager", "parent", "student"] },
 ];
 
 async function enterApp() {
@@ -339,14 +338,15 @@ async function enterApp() {
   } else session.perms = [];
   const nav = document.getElementById("tabs");
   nav.innerHTML = "";
-  TABS.filter(t => t.roles.includes(session.role) || (session.perms || []).includes(t.id)).forEach(t => {
+  const visibleTabs = TABS.filter(t => t.roles.includes(session.role) || (session.perms || []).includes(t.id));
+  visibleTabs.forEach(t => {
     const b = document.createElement("button");
     b.textContent = t.label; b.dataset.tab = t.id;
     b.addEventListener("click", () => { currentTab = t.id; render(); });
     nav.appendChild(b);
   });
   await refreshCache();
-  currentTab = "dashboard";
+  currentTab = visibleTabs.some(t => t.id === "dashboard") ? "dashboard" : (visibleTabs.length ? visibleTabs[0].id : "dashboard");
   render();
 }
 async function refreshCache() {
@@ -398,7 +398,6 @@ function render() {
   if (currentTab === "accounts") return viewAccounts(m);
   if (currentTab === "sms") return viewSms(m);
   if (currentTab === "announcements") return viewAnnouncements(m);
-  if (currentTab === "homework") return viewHomework(m);
 }
 
 /* ---------- Dashboard ---------- */
@@ -442,6 +441,8 @@ async function viewDashboard(m) {
 
 /* ---------- Attendance ---------- */
 let attState = {}; // student_id -> status
+const PERIODS = ["زنگ اول", "زنگ دوم", "زنگ سوم", "زنگ چهارم"];
+function periodName(p) { return p ? (PERIODS[p - 1] || ("زنگ " + p)) : "بدون زنگ"; }
 async function viewAttendance(m) {
   const tj = todayJalaali();
   m.innerHTML = `
@@ -451,6 +452,7 @@ async function viewAttendance(m) {
         <div class="field"><label>کلاس</label><select id="attClass">${myClasses().map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
         <div class="field"><label>تاریخ (شمسی)</label>${jalaliFields("att", tj)}</div>
         <div class="field"><label>درس</label><select id="attSubject"><option value="">بدون درس (کل روز)</option></select></div>
+        <div class="field"><label>زنگ</label><select id="attPeriod">${PERIODS.map((p, i) => `<option value="${i + 1}">${p}</option>`).join("")}</select></div>
         <button class="btn small" id="attLoad">نمایش فهرست</button>
       </div>
       <div id="attBody"><p class="muted">یک کلاس را انتخاب کنید و «نمایش فهرست» را بزنید.</p></div>
@@ -478,8 +480,9 @@ async function loadAttList() {
   const body = document.getElementById("attBody");
   body.innerHTML = '<p class="muted">در حال بارگذاری…</p>';
   const subjectId = document.getElementById("attSubject").value || null;
+  const period = parseInt(document.getElementById("attPeriod").value, 10) || null;
   const students = cache.students.filter(s => s.class_id === classId);
-  const existing = await get(`/attendance?select=student_id,status&class_id=eq.${classId}&attendance_date=eq.${date}` + (subjectId ? `&subject_id=eq.${subjectId}` : "&subject_id=is.null")).catch(() => []);
+  const existing = await get(`/attendance?select=student_id,status&class_id=eq.${classId}&attendance_date=eq.${date}` + (subjectId ? `&subject_id=eq.${subjectId}` : "&subject_id=is.null") + (period ? `&period=eq.${period}` : "")).catch(() => []);
   attState = {};
   (existing || []).forEach(r => attState[r.student_id] = r.status);
   if (!students.length) { body.innerHTML = '<p class="muted">این کلاس دانش‌آموزی ندارد.</p>'; return; }
@@ -513,9 +516,9 @@ async function loadAttList() {
   const attSaveEl = document.getElementById("attSave");
   if (session.role === "deputy") { attSaveEl.remove(); body.querySelectorAll(".seg button").forEach(b => { b.disabled = true; }); }
   else attSaveEl.addEventListener("click", async () => {
-    const rows = students.map(s => ({ student_id: s.id, class_id: classId, attendance_date: date, status: attState[s.id] || "present", recorded_by: session.username, school_id: session.school_id, subject_id: subjectId }));
+    const rows = students.map(s => ({ student_id: s.id, class_id: classId, attendance_date: date, status: attState[s.id] || "present", recorded_by: session.username, school_id: session.school_id, subject_id: subjectId, period: period }));
     try {
-      await api(`/attendance?class_id=eq.${classId}&attendance_date=eq.${date}` + (subjectId ? `&subject_id=eq.${subjectId}` : "&subject_id=is.null"), { method: "DELETE" });
+      await api(`/attendance?class_id=eq.${classId}&attendance_date=eq.${date}` + (subjectId ? `&subject_id=eq.${subjectId}` : "&subject_id=is.null") + (period ? `&period=eq.${period}` : ""), { method: "DELETE" });
       if (rows.length) await post("/attendance", rows);
       toast("حضور و غیاب ثبت شد"); loadAttRecent();
     } catch (ex) { toast("خطا در ثبت"); }
@@ -523,28 +526,53 @@ async function loadAttList() {
 }
 async function loadAttRecent() {
   const box = document.getElementById("attRecent");
-  const rows = await get("/attendance?select=*&order=created_at.desc&limit=30").catch(() => []);
+  const rows = await get("/attendance?select=*&order=attendance_date.desc,created_at.desc&limit=400").catch(() => []);
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز ثبتی انجام نشده است.</p>'; return; }
   const STA = { present: "حاضر", absent: "غایب", late: "تأخیر", excused: "غیبت موجه" };
-  box.innerHTML = `<table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>تاریخ</th><th>وضعیت</th><th>ثبت‌کننده</th><th>عملیات</th></tr></thead><tbody>
-    ${rows.map(r => `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "—"}</td><td>${faDate(r.attendance_date)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td><td>${r.recorded_by || "—"}</td><td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-att="${r.id}">ویرایش</button><button class="btn small secondary" data-del-att="${r.id}">حذف</button></span></td></tr>`).join("")}
+  const groups = new Map();
+  rows.forEach(r => {
+    const key = [r.attendance_date, r.class_id, r.subject_id || "", r.period || ""].join("|");
+    if (!groups.has(key)) groups.set(key, { date: r.attendance_date, class_id: r.class_id, subject_id: r.subject_id, period: r.period, recorded_by: r.recorded_by, ids: [], counts: { present: 0, absent: 0, late: 0, excused: 0 }, flagged: [] });
+    const g = groups.get(key);
+    g.ids.push(r.id);
+    if (g.counts[r.status] != null) g.counts[r.status]++;
+    if (r.status !== "present") g.flagged.push(r);
+    if (!g.recorded_by) g.recorded_by = r.recorded_by;
+  });
+  const list = [...groups.values()].slice(0, 20);
+  box.innerHTML = `<table><thead><tr><th>تاریخ</th><th>کلاس</th><th>درس</th><th>زنگ</th><th>خلاصه</th><th>غایب / تأخیر / موجه</th><th>ثبت‌کننده</th>${session.role === "deputy" ? "" : "<th>عملیات</th>"}</tr></thead><tbody>
+    ${list.map((g, gi) => `<tr>
+      <td>${faDate(g.date)}</td>
+      <td>${className(g.class_id)}</td>
+      <td>${g.subject_id ? subjectName(g.subject_id) : "بدون درس"}</td>
+      <td>${periodName(g.period)}</td>
+      <td>حاضر ${g.counts.present} · غایب ${g.counts.absent} · تأخیر ${g.counts.late} · موجه ${g.counts.excused}</td>
+      <td>${g.flagged.length ? g.flagged.map(r => `${studentName(r.student_id)} (${STA[r.status]}) <button type="button" class="btn small secondary" data-gdisc="${gi}:${r.student_id}">ثبت مورد</button>`).join("<br>") : "—"}</td>
+      <td>${g.recorded_by || "—"}</td>
+      ${session.role === "deputy" ? "" : `<td><button class="btn small secondary" data-del-group="${gi}">حذف گروه</button></td>`}
+    </tr>`).join("")}
     </tbody></table>`;
-  box.querySelectorAll("[data-del-att]").forEach(btn => btn.addEventListener("click", async () => {
-    if (!(await askConfirm("این رکورد حضور و غیاب حذف شود؟"))) return;
-    try { await api("/attendance?id=eq." + btn.dataset.delAtt, { method: "DELETE" }); toast("حذف شد"); loadAttRecent(); }
+  box.querySelectorAll("[data-del-group]").forEach(btn => btn.addEventListener("click", async () => {
+    const g = list[parseInt(btn.dataset.delGroup, 10)];
+    if (!g) return;
+    if (!(await askConfirm("همه رکوردهای این کلاس در این تاریخ و زنگ حذف شود؟"))) return;
+    try { await api("/attendance?id=in.(" + g.ids.join(",") + ")", { method: "DELETE" }); toast("حذف شد"); loadAttRecent(); }
     catch { toast("خطا در حذف"); }
   }));
-  box.querySelectorAll("[data-edit-att]").forEach(btn => btn.addEventListener("click", () => {
-    const r = rows.find(x => x.id === btn.dataset.editAtt);
-    if (!r) return;
-    openEdit("ویرایش حضور و غیاب — " + studentName(r.student_id),
-      eField("وضعیت", `<select id="edAttStatus">${Object.keys(STA).map(k => `<option value="${k}"${k === r.status ? " selected" : ""}>${STA[k]}</option>`).join("")}</select>`) +
-      `<p class="muted">درس: ${r.subject_id ? subjectName(r.subject_id) : "بدون درس"} — تاریخ: ${faDate(r.attendance_date)} — اگه وضعیت رو به «غایب» تغییر بدید، یک رکورد پیامک تازه هم ثبت می‌شه.</p>`,
+  box.querySelectorAll("[data-gdisc]").forEach(btn => btn.addEventListener("click", () => {
+    const parts = btn.dataset.gdisc.split(":");
+    const g = list[parseInt(parts[0], 10)];
+    const stu = cache.students.find(x => x.id === parts[1]);
+    if (!g || !stu) return;
+    if (!(cache.discTypes || []).length) { toast("مدیر هنوز موردی در لیست انضباطی تعریف نکرده است"); return; }
+    openEdit("ثبت مورد انضباطی — " + stu.first_name + " " + stu.last_name,
+      eField("مورد", `<select id="dType">${(cache.discTypes || []).map(t => `<option value="${t.title}">${t.title}</option>`).join("")}</select>`) +
+      eField("توضیحات", eInput("dDesc", "")),
       async () => {
         try {
-          await api("/attendance?id=eq." + r.id, { method: "PATCH", body: JSON.stringify({ status: val("edAttStatus") }) });
-          toast("ذخیره شد"); loadAttRecent();
-        } catch { toast("خطا در ذخیره"); return false; }
+          await post("/discipline_records", { class_id: g.class_id, student_id: stu.id, subject_id: g.subject_id || null, record_date: g.date, type_title: val("dType"), description: val("dDesc") || null, recorded_by: session.username });
+          toast("مورد انضباطی ثبت شد");
+        } catch { toast("خطا در ثبت"); return false; }
       });
   }));
 }
@@ -789,8 +817,8 @@ async function runReport() {
       if (classId) q += "&class_id=eq." + classId;
       const rows = await get(q);
       const list = (rows || []).filter(r => r.subject_id ? subIds.has(r.subject_id) : !teacherId);
-      box.innerHTML = list.length ? `<p style="margin-bottom:8px">${list.length} رکورد پیدا شد.</p><table><thead><tr><th>تاریخ</th><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>وضعیت</th></tr></thead><tbody>
-        ${list.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "بدون درس"}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
+      box.innerHTML = list.length ? `<p style="margin-bottom:8px">${list.length} رکورد پیدا شد.</p><table><thead><tr><th>تاریخ</th><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>زنگ</th><th>وضعیت</th></tr></thead><tbody>
+        ${list.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "بدون درس"}</td><td>${periodName(r.period)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
         </tbody></table>` : '<p class="muted">رکوردی پیدا نشد.</p>';
     } else if (type === "grades") {
       const rows = await get("/grades?select=*&created_at=gte." + from + "T00:00:00&created_at=lte." + to + "T23:59:59&order=created_at.desc");
@@ -912,7 +940,7 @@ async function viewBackup(m) {
 }
 
 /* ---------- Delegation ---------- */
-const PERM_TABS = [["students", "دانش‌آموزان"], ["classes", "کلاس‌ها"], ["subjects", "دروس کلاس‌ها"], ["staff", "پرسنل"], ["years", "سال تحصیلی"], ["grades", "نمرات"], ["discipline", "کاربرگ انضباطی"], ["reports", "گزارش‌ها"], ["sms", "پنل پیامک"], ["announcements", "اطلاعیه‌ها"], ["homework", "تکالیف"], ["backup", "پشتیبان‌گیری"]];
+const PERM_TABS = [["students", "دانش‌آموزان"], ["classes", "کلاس‌ها"], ["subjects", "دروس کلاس‌ها"], ["staff", "پرسنل"], ["years", "سال تحصیلی"], ["grades", "نمرات"], ["discipline", "کاربرگ انضباطی"], ["reports", "گزارش‌ها"], ["sms", "پنل پیامک"], ["announcements", "اطلاعیه‌ها"], ["backup", "پشتیبان‌گیری"]];
 function delegationPanelHtml(profiles) {
   const people = (profiles || []).filter(p => p.role === "teacher" || p.role === "deputy");
   return `<h2>تفویض اختیار مدیر</h2>
@@ -1101,8 +1129,8 @@ async function viewStudentProfile(studentId) {
       </div>
     </div>
     <div class="panel"><h2>غیبت‌ها و تأخیرها</h2>
-      ${nonPresent.length ? `<table><thead><tr><th>تاریخ</th><th>درس</th><th>وضعیت</th></tr></thead><tbody>
-      ${nonPresent.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "بدون درس (کل روز)"}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
+      ${nonPresent.length ? `<table><thead><tr><th>تاریخ</th><th>درس</th><th>زنگ</th><th>وضعیت</th></tr></thead><tbody>
+      ${nonPresent.map(r => `<tr><td>${faDate(r.attendance_date)}</td><td>${r.subject_id ? subjectName(r.subject_id) : "بدون درس (کل روز)"}</td><td>${periodName(r.period)}</td><td><span class="badge ${r.status}">${STA[r.status]}</span></td></tr>`).join("")}
       </tbody></table>` : '<p class="muted">غیبت یا تأخیری ثبت نشده است.</p>'}</div>
     <div class="panel"><h2>موارد انضباطی</h2>
       ${(disc || []).length ? `<table><thead><tr><th>تاریخ</th><th>مورد</th><th>توضیحات</th><th>ثبت‌کننده</th></tr></thead><tbody>
@@ -1296,57 +1324,6 @@ async function viewAnnouncements(m) {
       async () => {
         try {
           await api("/announcements?id=eq." + a.id, { method: "PATCH", body: JSON.stringify({ title: val("edAnnTitle"), body: val("edAnnBody"), audience: val("edAnnAud") }) });
-          toast("ذخیره شد"); render();
-        } catch { toast("خطا در ذخیره"); return false; }
-      });
-  }));
-}
-
-/* ---------- Homework ---------- */
-async function viewHomework(m) {
-  const canEditHw = session.role === "manager" || session.role === "teacher";
-  let hwFilter = "";
-  if ((session.role === "student" || session.role === "parent") && session.student_id) {
-    const st = await get("/students?select=class_id&id=eq." + session.student_id).catch(() => []);
-    if (st && st.length) hwFilter = "&class_id=eq." + st[0].class_id;
-  }
-  const rows = await get("/homework?select=*&order=created_at.desc" + hwFilter).catch(() => []);
-  m.innerHTML = `
-    ${session.role !== "parent" ? `<div class="panel"><h2>تکلیف جدید</h2>
-      <form id="hwForm"><div class="form-grid">
-        <div class="field"><label>کلاس</label><select id="hwClass">${cache.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
-        <div class="field"><label>عنوان</label><input id="hwTitle" required></div>
-        <div class="field"><label>مهلت تحویل (شمسی)</label>${jalaliFields("hw", { jy: "", jm: "", jd: "" })}</div>
-      </div>
-      <div class="field" style="margin-top:10px"><label>توضیح</label><textarea id="hwDesc" rows="2"></textarea></div>
-      <button class="btn small">ثبت تکلیف</button></form></div>` : ""}
-    <div class="panel"><h2>تکالیف</h2>
-      ${(rows && rows.length) ? `<table><thead><tr><th>عنوان</th><th>کلاس</th><th>مهلت</th><th>توضیح</th>${canEditHw ? "<th>عملیات</th>" : ""}</tr></thead><tbody>
-        ${rows.map(h => `<tr><td>${h.title}</td><td>${className(h.class_id)}</td><td>${faDate(h.due_date)}</td><td>${h.description || "—"}</td>${canEditHw ? `<td><span style="display:inline-flex;gap:6px"><button class="btn small" data-edit-hw="${h.id}">ویرایش</button><button class="btn small secondary" data-del-hw="${h.id}">حذف</button></span></td>` : ""}</tr>`).join("")}
-        </tbody></table>` : '<p class="muted">تکلیفی ثبت نشده است.</p>'}
-    </div>`;
-  const f = document.getElementById("hwForm");
-  if (f) f.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try { await post("/homework", { class_id: val("hwClass"), title: val("hwTitle"), description: val("hwDesc") || null, due_date: readJalali("hw") }); toast("تکلیف ثبت شد"); render(); }
-    catch { toast("خطا در ثبت"); }
-  });
-  m.querySelectorAll("[data-del-hw]").forEach(btn => btn.addEventListener("click", async () => {
-    if (!(await askConfirm("این تکلیف حذف شود؟"))) return;
-    try { await api("/homework?id=eq." + btn.dataset.delHw, { method: "DELETE" }); toast("حذف شد"); render(); }
-    catch { toast("خطا در حذف"); }
-  }));
-  m.querySelectorAll("[data-edit-hw]").forEach(btn => btn.addEventListener("click", () => {
-    const h = rows.find(x => x.id === btn.dataset.editHw);
-    if (!h) return;
-    openEdit("ویرایش تکلیف",
-      eField("عنوان", eInput("edHwTitle", h.title)) +
-      eField("کلاس", `<select id="edHwClass">${cache.classes.map(c => `<option value="${c.id}"${c.id === h.class_id ? " selected" : ""}>${c.name}</option>`).join("")}</select>`) +
-      eField("مهلت تحویل (شمسی)", jalaliFields("edHw", isoToJalaliParts(h.due_date))) +
-      eField("توضیح", eTextarea("edHwDesc", h.description)),
-      async () => {
-        try {
-          await api("/homework?id=eq." + h.id, { method: "PATCH", body: JSON.stringify({ title: val("edHwTitle"), class_id: val("edHwClass"), due_date: readJalali("edHw"), description: val("edHwDesc") || null }) });
           toast("ذخیره شد"); render();
         } catch { toast("خطا در ذخیره"); return false; }
       });
