@@ -458,10 +458,10 @@ async function viewAttendance(m) {
       </div>
       <div id="attBody"><p class="muted">یک کلاس را انتخاب کنید و «نمایش فهرست» را بزنید.</p></div>
     </div>
-    <div class="panel">
+    ${session.role === "teacher" ? "" : `<div class="panel">
       <h2>آخرین ثبت‌ها</h2>
       <div id="attRecent"><p class="muted">در حال بارگذاری…</p></div>
-    </div>`;
+    </div>`}`;
   document.getElementById("attLoad").addEventListener("click", loadAttList);
   const fillSubjects = () => {
     const cid = document.getElementById("attClass").value;
@@ -527,6 +527,7 @@ async function loadAttList() {
 }
 async function loadAttRecent() {
   const box = document.getElementById("attRecent");
+  if (!box) return;
   const rows = await get("/attendance?select=*&order=attendance_date.desc,created_at.desc&limit=400").catch(() => []);
   if (!rows || !rows.length) { box.innerHTML = '<p class="muted">هنوز ثبتی انجام نشده است.</p>'; return; }
   const STA = { present: "حاضر", absent: "غایب", late: "تأخیر", excused: "غیبت موجه" };
