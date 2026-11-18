@@ -442,6 +442,7 @@ async function viewDashboard(m) {
 /* ---------- Attendance ---------- */
 let attState = {}; // student_id -> status
 const PERIODS = ["زنگ اول", "زنگ دوم", "زنگ سوم", "زنگ چهارم"];
+const GRADE_TERMS = ["مهر", "آبان", "آذر", "نوبت اول", "بهمن", "اسفند", "اردیبهشت", "نوبت دوم"];
 function periodName(p) { return p ? (PERIODS[p - 1] || ("زنگ " + p)) : "بدون زنگ"; }
 async function viewAttendance(m) {
   const tj = todayJalaali();
@@ -789,6 +790,7 @@ async function viewReports(m) {
       <h2>خروجی اکسل نمرات برای کارنامه‌ساز</h2>
       <div class="row-actions">
         <div class="field"><label>دبیر / هنرآموز</label><select id="kxTeacher">${cache.staff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join("")}</select></div>
+        <div class="field"><label>ماه / نوبت</label><select id="kxTerm">${GRADE_TERMS.map(t => `<option value="${t}">${t}</option>`).join("")}</select></div>
         <button class="btn small" id="kxGo">دانلود فایل اکسل نمرات</button>
       </div>
       <p class="muted" style="margin-top:8px">برای هر درس این دبیر یک شیت جدا ساخته می‌شود. ستون‌ها: ردیف، نام خانوادگی، نام، نام پدر، کد ملی، نام درس، نمره.</p>
@@ -823,8 +825,8 @@ async function runReport() {
     } else if (type === "grades") {
       const rows = await get("/grades?select=*&created_at=gte." + from + "T00:00:00&created_at=lte." + to + "T23:59:59&order=created_at.desc");
       const list = (rows || []).filter(r => subIds.has(r.subject_id) && (!classId || r.class_id === classId));
-      box.innerHTML = list.length ? `<p style="margin-bottom:8px">${list.length} نمره پیدا شد.</p><table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>دبیر</th><th>نمره</th></tr></thead><tbody>
-        ${list.map(r => { const sub = (cache.subjects || []).find(s => s.id === r.subject_id); return `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${sub ? sub.subject_name : "—"}</td><td>${sub && sub.teacher_id ? staffNameOf(sub.teacher_id) : "—"}</td><td>${r.score || "—"}</td></tr>`; }).join("")}
+      box.innerHTML = list.length ? `<p style="margin-bottom:8px">${list.length} نمره پیدا شد.</p><table><thead><tr><th>دانش‌آموز</th><th>کلاس</th><th>درس</th><th>دبیر</th><th>ماه / نوبت</th><th>نمره</th></tr></thead><tbody>
+        ${list.map(r => { const sub = (cache.subjects || []).find(s => s.id === r.subject_id); return `<tr><td>${studentName(r.student_id)}</td><td>${className(r.class_id)}</td><td>${sub ? sub.subject_name : "—"}</td><td>${sub && sub.teacher_id ? staffNameOf(sub.teacher_id) : "—"}</td><td>${r.term || "—"}</td><td>${r.score || "—"}</td></tr>`; }).join("")}
         </tbody></table>` : '<p class="muted">نمره‌ای پیدا نشد.</p>';
     } else {
       let q = "/discipline_records?select=*&record_date=gte." + from + "&record_date=lte." + to + "&order=record_date.desc";
@@ -840,6 +842,7 @@ async function runReport() {
 
 async function exportKarnameh() {
   const tid = document.getElementById("kxTeacher").value;
+  const kxTerm = document.getElementById("kxTerm").value;
   const msg = document.getElementById("kxMsg");
   if (!tid) { msg.innerHTML = '<p class="muted">دبیری انتخاب نشده است.</p>'; return; }
   msg.innerHTML = '<p class="muted">در حال ساخت فایل…</p>';
@@ -847,7 +850,7 @@ async function exportKarnameh() {
     await loadXLSX();
     const subs = (cache.subjects || []).filter(s => s.teacher_id === tid);
     if (!subs.length) { msg.innerHTML = '<p class="muted">این دبیر درسی ندارد.</p>'; return; }
-    const grades = await get("/grades?select=*&subject_id=in.(" + subs.map(s => s.id).join(",") + ")").catch(() => []);
+    const grades = await get("/grades?select=*&subject_id=in.(" + subs.map(s => s.id).join(",") + ")&term=eq." + encodeURIComponent(kxTerm)).catch(() => []);
     const gmap = {};
     (grades || []).forEach(g => { gmap[g.student_id + "|" + g.subject_id] = g.score; });
     const wb = XLSX.utils.book_new();
@@ -864,7 +867,7 @@ async function exportKarnameh() {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
     }
     if (!wb.SheetNames.length) { msg.innerHTML = '<p class="muted">برای این دبیر کلاسی با دانش‌آموز پیدا نشد.</p>'; return; }
-    XLSX.writeFile(wb, "karnameh-" + staffNameOf(tid) + ".xlsx");
+    XLSX.writeFile(wb, "karnameh-" + staffNameOf(tid) + "-" + kxTerm + ".xlsx");
     msg.innerHTML = '<p>فایل ساخته و دانلود شد (' + wb.SheetNames.length + ' شیت).</p>';
   } catch { msg.innerHTML = '<p style="color:#dc2626">ساخت فایل ممکن نشد.</p>'; }
 }
@@ -980,6 +983,7 @@ async function viewGrades(m) {
       <div class="row-actions">
         <div class="field"><label>کلاس</label><select id="grClass">${myClasses().map(c => `<option value="${c.id}">${c.name}</option>`).join("")}</select></div>
         <div class="field"><label>درس</label><select id="grSubject"></select></div>
+        <div class="field"><label>ماه / نوبت</label><select id="grTerm">${GRADE_TERMS.map(t => `<option value="${t}">${t}</option>`).join("")}</select></div>
         <button class="btn small" id="grLoad">نمایش</button>
       </div>
       <div id="grBody"><p class="muted">کلاس و درس را انتخاب کنید و «نمایش» را بزنید.</p></div>
@@ -997,11 +1001,12 @@ async function viewGrades(m) {
 async function loadGrades() {
   const classId = document.getElementById("grClass").value;
   const subjectId = document.getElementById("grSubject").value;
+  const term = document.getElementById("grTerm").value;
   const body = document.getElementById("grBody");
   if (!subjectId) { body.innerHTML = '<p class="muted">برای این کلاس درسی ثبت نشده است.</p>'; return; }
   body.innerHTML = '<p class="muted">در حال بارگذاری…</p>';
   const students = cache.students.filter(s => s.class_id === classId);
-  const rows = await get("/grades?select=*&subject_id=eq." + subjectId).catch(() => []);
+  const rows = await get("/grades?select=*&subject_id=eq." + subjectId + "&term=eq." + encodeURIComponent(term)).catch(() => []);
   const gmap = {};
   (rows || []).forEach(r => { gmap[r.student_id] = r; });
   const subj = (cache.subjects || []).find(s => s.id === subjectId);
@@ -1015,12 +1020,12 @@ async function loadGrades() {
     const ups = [], dels = [];
     body.querySelectorAll(".grScore").forEach(inp => {
       const v = inp.value.trim();
-      if (v) ups.push({ student_id: inp.dataset.student, subject_id: subjectId, class_id: classId, score: v, recorded_by: session.username, school_id: session.school_id, updated_at: new Date().toISOString() });
+      if (v) ups.push({ student_id: inp.dataset.student, subject_id: subjectId, class_id: classId, score: v, term: term, recorded_by: session.username, school_id: session.school_id, updated_at: new Date().toISOString() });
       else if (gmap[inp.dataset.student]) dels.push(inp.dataset.student);
     });
     try {
-      if (ups.length) await upsert("/grades?on_conflict=student_id,subject_id", ups);
-      for (const sid of dels) await api("/grades?subject_id=eq." + subjectId + "&student_id=eq." + sid, { method: "DELETE" });
+      if (ups.length) await upsert("/grades?on_conflict=student_id,subject_id,term", ups);
+      for (const sid of dels) await api("/grades?subject_id=eq." + subjectId + "&term=eq." + encodeURIComponent(term) + "&student_id=eq." + sid, { method: "DELETE" });
       toast("نمرات ثبت شد"); loadGrades();
     } catch { toast("خطا در ثبت نمرات"); }
   });
